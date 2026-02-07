@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>nanobot 🐈</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="logo">
+                <span class="logo-icon">🐈</span>
+                <span class="logo-text">nanobot</span>
+            </div>
+            <div class="nav-items">
+                <button class="nav-item active" data-tab="chat">
+                    <span class="nav-icon">💬</span>
+                    <span>Chat</span>
+                </button>
+                <button class="nav-item" data-tab="history">
+                    <span class="nav-icon">📜</span>
+                    <span>History</span>
+                </button>
+                <button class="nav-item" data-tab="config">
+                    <span class="nav-icon">⚙️</span>
+                    <span>Config</span>
+                </button>
+            </div>
+            <div class="sidebar-footer">
+                <div class="status-indicator">
+                    <span class="status-dot"></span>
+                    <span id="status-text">Loading...</span>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Chat Tab -->
+            <section id="chat-tab" class="tab-content active">
+                <div class="chat-header">
+                    <h1>Chat with nanobot</h1>
+                    <div class="session-selector">
+                        <label for="session-select">Session:</label>
+                        <select id="session-select">
+                            <option value="ui:default">Default</option>
+                        </select>
+                        <button id="new-session-btn" class="btn btn-sm">+ New</button>
+                    </div>
+                </div>
+                <div class="chat-container">
+                    <div id="chat-messages" class="chat-messages">
+                        <div class="welcome-message">
+                            <div class="welcome-icon">🐈</div>
+                            <h2>Welcome to nanobot!</h2>
+                            <p>I'm your ultra-lightweight AI assistant. Ask me anything!</p>
+                        </div>
+                    </div>
+                    <div id="tool-progress" class="tool-progress hidden">
+                        <div class="progress-spinner"></div>
+                        <span id="tool-status">Processing...</span>
+                    </div>
+                </div>
+                <div class="chat-input-container">
+                    <textarea 
+                        id="chat-input" 
+                        placeholder="Type your message... (Shift+Enter for new line)"
+                        rows="1"
+                    ></textarea>
+                    <button id="send-btn" class="btn btn-primary">
+                        <span>Send</span>
+                        <span class="send-icon">→</span>
+                    </button>
+                </div>
+            </section>
+
+            <!-- History Tab -->
+            <section id="history-tab" class="tab-content">
+                <div class="page-header">
+                    <h1>Conversation History</h1>
+                    <button id="refresh-history-btn" class="btn btn-sm">🔄 Refresh</button>
+                </div>
+                <div id="history-list" class="history-list">
+                    <p class="loading-text">Loading sessions...</p>
+                </div>
+                <div id="history-detail" class="history-detail hidden">
+                    <div class="history-detail-header">
+                        <button id="back-to-list-btn" class="btn btn-sm">← Back</button>
+                        <h2 id="history-session-key">Session</h2>
+                        <button id="delete-session-btn" class="btn btn-sm btn-danger">🗑️ Delete</button>
+                    </div>
+                    <div id="history-messages" class="history-messages"></div>
+                </div>
+            </section>
+
+            <!-- Config Tab -->
+            <section id="config-tab" class="tab-content">
+                <div class="page-header">
+                    <h1>Configuration</h1>
+                    <div class="header-actions">
+                        <button id="reload-config-btn" class="btn btn-sm">🔄 Reload</button>
+                        <button id="save-config-btn" class="btn btn-primary">💾 Save</button>
+                    </div>
+                </div>
+                <div class="config-container">
+                    <!-- Providers Section -->
+                    <div class="config-section">
+                        <h2 class="section-title">
+                            <span class="section-icon">🤖</span>
+                            LLM Providers
+                        </h2>
+                        <div class="config-grid" id="providers-config">
+                            <!-- Dynamically populated -->
+                        </div>
+                    </div>
+
+                    <!-- Agent Defaults Section -->
+                    <div class="config-section">
+                        <h2 class="section-title">
+                            <span class="section-icon">🧠</span>
+                            Agent Defaults
+                        </h2>
+                        <div class="config-fields" id="agent-config">
+                            <!-- Dynamically populated -->
+                        </div>
+                    </div>
+
+                    <!-- Tools Section -->
+                    <div class="config-section">
+                        <h2 class="section-title">
+                            <span class="section-icon">🔧</span>
+                            Tools
+                        </h2>
+                        <div class="config-fields" id="tools-config">
+                            <!-- Dynamically populated -->
+                        </div>
+                    </div>
+
+                    <!-- Raw JSON Editor (Advanced) -->
+                    <div class="config-section collapsible">
+                        <h2 class="section-title toggle-section">
+                            <span class="section-icon">📝</span>
+                            Advanced: Raw JSON
+                            <span class="toggle-icon">▼</span>
+                        </h2>
+                        <div class="section-content hidden">
+                            <textarea id="raw-config-editor" class="code-editor" rows="20"></textarea>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
