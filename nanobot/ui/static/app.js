@@ -1,78 +1,79 @@
 /**
- * nanobot Web UI - Main Application
+ * nanobot Educational UI - JavaScript
+ * Shows how agentic AI works step-by-step
  */
 
-// ============================================================================
-// State
-// ============================================================================
-
+// ============================================
+// State Management
+// ============================================
 const state = {
-    config: null,
-    sessions: [],
-    currentSession: 'ui:default',
     ws: null,
+    config: null,
+    currentSession: 'ui:default',
     isProcessing: false,
+    debugVisible: true,
+
+    // Metrics
+    metrics: {
+        model: 'Loading...',
+        contextTokens: 0,
+        contextLimit: 128000,
+        inputTokens: 0,
+        outputTokens: 0
+    },
+
+    // Processing state
+    currentStep: null,
+    toolCalls: [],
+    messageFlow: []
 };
 
-// ============================================================================
-// API Functions
-// ============================================================================
-
+// ============================================
+// API Client
+// ============================================
 const api = {
+    baseUrl: '',
+
     async getConfig() {
-        const res = await fetch('/api/config');
+        const res = await fetch(`${this.baseUrl}/api/config`);
         return res.json();
     },
 
     async saveConfig(config) {
-        const res = await fetch('/api/config', {
+        const res = await fetch(`${this.baseUrl}/api/config`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ config }),
+            body: JSON.stringify({ config })
         });
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.detail || 'Failed to save config');
-        }
         return res.json();
     },
 
     async getSessions() {
-        const res = await fetch('/api/sessions');
+        const res = await fetch(`${this.baseUrl}/api/sessions`);
         return res.json();
     },
 
     async getSession(key) {
-        const res = await fetch(`/api/sessions/${encodeURIComponent(key)}`);
+        const res = await fetch(`${this.baseUrl}/api/sessions/${encodeURIComponent(key)}`);
         return res.json();
     },
 
     async deleteSession(key) {
-        const res = await fetch(`/api/sessions/${encodeURIComponent(key)}`, {
-            method: 'DELETE',
+        const res = await fetch(`${this.baseUrl}/api/sessions/${encodeURIComponent(key)}`, {
+            method: 'DELETE'
         });
         return res.json();
     },
 
     async getStatus() {
-        const res = await fetch('/api/status');
+        const res = await fetch(`${this.baseUrl}/api/status`);
         return res.json();
-    },
-
-    async chat(message, sessionId) {
-        const res = await fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message, session_id: sessionId }),
-        });
-        return res.json();
-    },
+    }
 };
 
-// ============================================================================
-// WebSocket
-// ============================================================================
-
+// ============================================
+// WebSocket Connection
+// ============================================
 function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws/chat`;
@@ -80,19 +81,16 @@ function connectWebSocket() {
     state.ws = new WebSocket(wsUrl);
 
     state.ws.onopen = () => {
-        console.log('WebSocket connected');
-        updateStatus(true);
+        updateStatus('Connected', true);
     };
 
     state.ws.onclose = () => {
-        console.log('WebSocket disconnected');
-        updateStatus(false);
-        // Reconnect after delay
+        updateStatus('Disconnected', false);
         setTimeout(connectWebSocket, 3000);
     };
 
-    state.ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+    state.ws.onerror = () => {
+        updateStatus('Error', false);
     };
 
     state.ws.onmessage = (event) => {
@@ -101,43 +99,273 @@ function connectWebSocket() {
     };
 }
 
-function handleWebSocketMessage(data) {
-    const toolProgress = document.getElementById('tool-progress');
-    const toolStatus = document.getElementById('tool-status');
+function updateStatus(text, connected) {
+    const statusText = document.getElementById('status-text');
+    const statusDot = document.querySelector('.status-dot');
 
+    statusText.textContent = text;
+    statusDot.style.background = connected ? 'var(--color-tool-result)' : 'var(--color-error)';
+}
+
+// ============================================
+// Message Handling
+// ============================================
+function handleWebSocketMessage(data) {
     switch (data.type) {
         case 'status':
-            toolProgress.classList.remove('hidden');
-            toolStatus.textContent = data.content;
+            if (data.content === 'Processing...') {
+                setStep('receive', 'complete');
+                setStep('context', 'active');
+            }
+            addToMessageFlow('system', data.content);
+            break;
+
+        case 'debug_step':
+            handleDebugStep(data);
+            break;
+
+        case 'debug_metrics':
+            handleDebugMetrics(data.content);
+            break;
+
+        case 'debug_prompt':
+            handleDebugPrompt(data.content);
             break;
 
         case 'tools':
-            toolProgress.classList.remove('hidden');
-            toolStatus.textContent = data.content;
+            setStep('context', 'complete');
+            setStep('llm', 'complete');
+            setStep('tools', 'active');
+            addMessage('tool', data.content, '🔧');
+            addToMessageFlow('tool', data.content);
             break;
 
         case 'tool_result':
-            // Show brief tool result
-            toolStatus.textContent = `${data.tool}: Done`;
+            addToolCall(data.tool, data.arguments, data.content);
+            addMessage('tool-result', `✓ ${data.tool}: ${data.content}`, '✓');
+            addToMessageFlow('tool', `Result: ${data.content}`);
             break;
 
         case 'response':
-            // Hide progress, add message
-            toolProgress.classList.add('hidden');
-            addMessage('assistant', data.content);
+            setStep('tools', 'complete');
+            setStep('response', 'complete');
+            addMessage('assistant', data.content, '🐈');
+            addToMessageFlow('assistant', data.content);
             state.isProcessing = false;
             updateSendButton();
+
+            // Update output tokens (estimate)
+            state.metrics.outputTokens += Math.ceil(data.content.length / 4);
+            updateMetrics();
             break;
 
         case 'error':
-            toolProgress.classList.add('hidden');
-            addMessage('assistant', `Error: ${data.content}`);
+            addMessage('error', data.content, '⚠️');
+            addToMessageFlow('system', `Error: ${data.content}`);
             state.isProcessing = false;
             updateSendButton();
+            resetSteps();
             break;
     }
 }
 
+function handleDebugStep(data) {
+    const stepMap = {
+        'receive_input': 'receive',
+        'build_context': 'context',
+        'call_llm': 'llm',
+        'execute_tools': 'tools',
+        'generate_response': 'response'
+    };
+
+    const step = stepMap[data.step] || data.step;
+
+    if (data.status === 'start') {
+        setStep(step, 'active');
+    } else if (data.status === 'complete') {
+        setStep(step, 'complete');
+    }
+
+    if (data.details) {
+        addToMessageFlow('system', data.details);
+    }
+}
+
+function handleDebugMetrics(metrics) {
+    state.metrics = { ...state.metrics, ...metrics };
+    updateMetrics();
+}
+
+function handleDebugPrompt(prompt) {
+    const systemPromptEl = document.getElementById('system-prompt');
+    if (systemPromptEl) {
+        systemPromptEl.textContent = prompt;
+    }
+}
+
+// ============================================
+// Processing Steps
+// ============================================
+function setStep(stepName, status) {
+    const steps = document.querySelectorAll('.step');
+    steps.forEach(step => {
+        if (step.dataset.step === stepName) {
+            step.className = `step ${status}`;
+        }
+    });
+}
+
+function resetSteps() {
+    const steps = document.querySelectorAll('.step');
+    steps.forEach(step => {
+        step.className = 'step waiting';
+    });
+}
+
+// ============================================
+// Metrics Display
+// ============================================
+function updateMetrics() {
+    const { model, contextTokens, contextLimit, inputTokens, outputTokens } = state.metrics;
+
+    document.getElementById('metric-model').textContent = model || 'Unknown';
+    document.getElementById('metric-tokens').textContent = formatTokens(contextTokens);
+    document.getElementById('metric-limit').textContent = formatTokens(contextLimit);
+    document.getElementById('metric-input').textContent = formatTokens(inputTokens);
+    document.getElementById('metric-output').textContent = formatTokens(outputTokens);
+
+    const percentage = contextLimit > 0 ? (contextTokens / contextLimit) * 100 : 0;
+    document.getElementById('token-bar-fill').style.width = `${Math.min(percentage, 100)}%`;
+}
+
+function formatTokens(num) {
+    if (num >= 1000) {
+        return (num / 1000).toFixed(1) + 'K';
+    }
+    return num.toString();
+}
+
+// ============================================
+// Chat Messages
+// ============================================
+function addMessage(type, content, avatar = '') {
+    const messagesContainer = document.getElementById('chat-messages');
+
+    // Remove welcome message if present
+    const welcome = messagesContainer.querySelector('.welcome-message');
+    if (welcome) {
+        welcome.remove();
+    }
+
+    const avatarMap = {
+        'user': '👤',
+        'assistant': '🐈',
+        'tool': '🔧',
+        'tool-result': '✓',
+        'system': '⚙️',
+        'error': '⚠️'
+    };
+
+    const labelMap = {
+        'user': 'You',
+        'assistant': 'nanobot',
+        'tool': 'Tool Call',
+        'tool-result': 'Tool Result',
+        'system': 'System',
+        'error': 'Error'
+    };
+
+    const message = document.createElement('div');
+    message.className = `message ${type}`;
+    message.innerHTML = `
+        <div class="message-avatar">${avatar || avatarMap[type] || '💬'}</div>
+        <div class="message-content">
+            <div class="message-label">${labelMap[type] || type}</div>
+            <div class="message-text">${formatContent(content)}</div>
+            <div class="message-time">${new Date().toLocaleTimeString()}</div>
+        </div>
+    `;
+
+    messagesContainer.appendChild(message);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+function formatContent(content) {
+    // Basic markdown formatting
+    let html = content
+        .replace(/```(\w+)?\n?([\s\S]*?)```/g, '<pre class="code-block"><code>$2</code></pre>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n/g, '<br>');
+    return html;
+}
+
+// ============================================
+// Tool Calls Display
+// ============================================
+function addToolCall(name, args, result) {
+    const toolCallsEl = document.getElementById('tool-calls');
+
+    // Clear empty state
+    const emptyState = toolCallsEl.querySelector('.empty-state');
+    if (emptyState) {
+        emptyState.remove();
+    }
+
+    const item = document.createElement('div');
+    item.className = 'tool-call-item';
+    item.innerHTML = `
+        <div class="tool-call-name">🔧 ${name}</div>
+        ${args ? `<div class="tool-call-args">${JSON.stringify(args, null, 2).substring(0, 100)}...</div>` : ''}
+        <div class="tool-call-result">${result.substring(0, 150)}${result.length > 150 ? '...' : ''}</div>
+    `;
+
+    toolCallsEl.appendChild(item);
+    toolCallsEl.scrollTop = toolCallsEl.scrollHeight;
+}
+
+// ============================================
+// Message Flow Display
+// ============================================
+function addToMessageFlow(role, content) {
+    const flowEl = document.getElementById('message-flow');
+
+    // Clear empty state
+    const emptyState = flowEl.querySelector('.empty-state');
+    if (emptyState) {
+        emptyState.remove();
+    }
+
+    const time = new Date().toLocaleTimeString();
+    const preview = content.length > 80 ? content.substring(0, 80) + '...' : content;
+
+    const item = document.createElement('div');
+    item.className = `flow-item ${role}`;
+    item.innerHTML = `
+        <span class="flow-role">${role}</span>
+        <span class="flow-content">${preview}</span>
+        <span class="flow-time">${time}</span>
+    `;
+
+    flowEl.appendChild(item);
+    flowEl.scrollTop = flowEl.scrollHeight;
+
+    state.messageFlow.push({ role, content, time });
+}
+
+function clearMessageFlow() {
+    const flowEl = document.getElementById('message-flow');
+    flowEl.innerHTML = '<div class="empty-state">Send a message to see the flow</div>';
+    state.messageFlow = [];
+
+    const toolCallsEl = document.getElementById('tool-calls');
+    toolCallsEl.innerHTML = '<div class="empty-state">No tool calls yet</div>';
+    state.toolCalls = [];
+}
+
+// ============================================
+// Send Message
+// ============================================
 function sendMessage(message) {
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
         alert('Not connected. Please wait...');
@@ -147,453 +375,427 @@ function sendMessage(message) {
     state.isProcessing = true;
     updateSendButton();
 
-    addMessage('user', message);
+    // Reset UI for new message
+    resetSteps();
+    setStep('receive', 'active');
 
-    // Clear welcome message if present
-    const welcome = document.querySelector('.welcome-message');
-    if (welcome) welcome.remove();
+    // Add user message
+    addMessage('user', message, '👤');
+    addToMessageFlow('user', message);
 
+    // Update input tokens (rough estimate: ~4 chars per token)
+    state.metrics.inputTokens += Math.ceil(message.length / 4);
+    state.metrics.contextTokens += Math.ceil(message.length / 4);
+    updateMetrics();
+
+    // Send via WebSocket
     state.ws.send(JSON.stringify({
         message,
         session_id: state.currentSession,
     }));
 }
 
-// ============================================================================
-// UI Functions
-// ============================================================================
+function updateSendButton() {
+    const sendBtn = document.getElementById('send-btn');
+    const input = document.getElementById('chat-input');
 
-function updateStatus(connected) {
-    const dot = document.querySelector('.status-dot');
-    const text = document.getElementById('status-text');
-
-    if (connected) {
-        dot.classList.add('connected');
-        text.textContent = 'Connected';
+    if (state.isProcessing) {
+        sendBtn.disabled = true;
+        sendBtn.innerHTML = '<span>Processing...</span>';
+        input.disabled = true;
     } else {
-        dot.classList.remove('connected');
-        text.textContent = 'Disconnected';
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = '<span>Send</span><span class="send-icon">→</span>';
+        input.disabled = false;
+        input.focus();
     }
 }
 
-function updateSendButton() {
-    const btn = document.getElementById('send-btn');
-    btn.disabled = state.isProcessing;
-    btn.querySelector('span').textContent = state.isProcessing ? 'Processing...' : 'Send';
+// ============================================
+// Debug Panel Toggle
+// ============================================
+function toggleDebugPanel() {
+    const panel = document.getElementById('debug-panel');
+    const btn = document.getElementById('toggle-debug');
+
+    state.debugVisible = !state.debugVisible;
+
+    if (state.debugVisible) {
+        panel.classList.remove('hidden');
+        btn.classList.add('active');
+    } else {
+        panel.classList.add('hidden');
+        btn.classList.remove('active');
+    }
 }
 
-function addMessage(role, content) {
-    const container = document.getElementById('chat-messages');
-    const message = document.createElement('div');
-    message.className = `message ${role}`;
-
-    const avatar = role === 'user' ? '👤' : '🐈';
-
-    // Format content (basic markdown-like formatting)
-    const formattedContent = formatContent(content);
-
-    message.innerHTML = `
-        <div class="message-avatar">${avatar}</div>
-        <div class="message-content">${formattedContent}</div>
-    `;
-
-    container.appendChild(message);
-    container.scrollTop = container.scrollHeight;
-}
-
-function formatContent(content) {
-    // Escape HTML
-    let safe = content
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-
-    // Code blocks
-    safe = safe.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
-
-    // Inline code
-    safe = safe.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-    // Bold
-    safe = safe.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-    // Newlines
-    safe = safe.replace(/\n/g, '<br>');
-
-    return safe;
-}
-
-// ============================================================================
-// Tab Navigation
-// ============================================================================
-
-function initTabs() {
-    const navItems = document.querySelectorAll('.nav-item');
-
-    navItems.forEach(item => {
-        item.addEventListener('click', () => {
-            const tabId = item.dataset.tab;
-
-            // Update nav
-            navItems.forEach(n => n.classList.remove('active'));
-            item.classList.add('active');
-
-            // Update content
-            document.querySelectorAll('.tab-content').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            document.getElementById(`${tabId}-tab`).classList.add('active');
-
-            // Load tab data
-            if (tabId === 'history') loadSessions();
-            if (tabId === 'config') loadConfig();
+// ============================================
+// Collapsible Sections
+// ============================================
+function setupCollapsibles() {
+    document.querySelectorAll('.toggle-section').forEach(toggle => {
+        toggle.addEventListener('click', () => {
+            const section = toggle.closest('.collapsible');
+            section.classList.toggle('expanded');
         });
     });
 }
 
-// ============================================================================
-// Chat Tab
-// ============================================================================
-
-function initChat() {
-    const input = document.getElementById('chat-input');
-    const sendBtn = document.getElementById('send-btn');
-    const newSessionBtn = document.getElementById('new-session-btn');
-
-    // Auto-resize textarea
-    input.addEventListener('input', () => {
-        input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+// ============================================
+// Tab Navigation
+// ============================================
+function switchTab(tabName) {
+    // Update nav items
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.tab === tabName);
     });
 
-    // Send on Enter (Shift+Enter for newline)
-    input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            handleSend();
-        }
+    // Update tab content
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.toggle('active', content.id === `${tabName}-tab`);
     });
 
-    sendBtn.addEventListener('click', handleSend);
-
-    newSessionBtn.addEventListener('click', () => {
-        const id = `ui:session_${Date.now()}`;
-        state.currentSession = id;
-
-        // Add to select
-        const select = document.getElementById('session-select');
-        const option = document.createElement('option');
-        option.value = id;
-        option.textContent = `Session ${Date.now()}`;
-        select.appendChild(option);
-        select.value = id;
-
-        // Clear chat
-        document.getElementById('chat-messages').innerHTML = `
-            <div class="welcome-message">
-                <div class="welcome-icon">🐈</div>
-                <h2>New Session</h2>
-                <p>Ready to chat!</p>
-            </div>
-        `;
-    });
-
-    document.getElementById('session-select').addEventListener('change', (e) => {
-        state.currentSession = e.target.value;
-        loadSessionMessages(e.target.value);
-    });
-}
-
-function handleSend() {
-    const input = document.getElementById('chat-input');
-    const message = input.value.trim();
-
-    if (!message || state.isProcessing) return;
-
-    sendMessage(message);
-    input.value = '';
-    input.style.height = 'auto';
-}
-
-async function loadSessionMessages(sessionId) {
-    try {
-        const session = await api.getSession(sessionId);
-        const container = document.getElementById('chat-messages');
-        container.innerHTML = '';
-
-        if (session.messages && session.messages.length > 0) {
-            session.messages.forEach(msg => {
-                if (msg.role === 'user' || msg.role === 'assistant') {
-                    addMessage(msg.role, msg.content);
-                }
-            });
-        } else {
-            container.innerHTML = `
-                <div class="welcome-message">
-                    <div class="welcome-icon">🐈</div>
-                    <h2>Welcome to nanobot!</h2>
-                    <p>I'm your ultra-lightweight AI assistant. Ask me anything!</p>
-                </div>
-            `;
-        }
-    } catch (e) {
-        console.error('Failed to load session:', e);
+    // Load tab-specific content
+    if (tabName === 'history') {
+        loadSessions();
+    } else if (tabName === 'config') {
+        loadConfig();
     }
 }
 
-// ============================================================================
-// History Tab
-// ============================================================================
-
+// ============================================
+// Sessions / History
+// ============================================
 async function loadSessions() {
-    const list = document.getElementById('history-list');
-    const detail = document.getElementById('history-detail');
-
-    list.classList.remove('hidden');
-    detail.classList.add('hidden');
+    const historyList = document.getElementById('history-list');
+    historyList.innerHTML = '<p class="loading-text">Loading sessions...</p>';
 
     try {
-        const data = await api.getSessions();
-        state.sessions = data.sessions;
+        const { sessions } = await api.getSessions();
 
-        if (state.sessions.length === 0) {
-            list.innerHTML = '<p class="loading-text">No sessions yet. Start chatting!</p>';
+        if (sessions.length === 0) {
+            historyList.innerHTML = '<p class="loading-text">No conversation history yet</p>';
             return;
         }
 
-        list.innerHTML = state.sessions.map(s => `
-            <div class="session-card" data-key="${s.key}">
-                <div class="session-info">
-                    <h3>${s.key}</h3>
-                    <p>Last updated: ${formatDate(s.updated_at)}</p>
-                </div>
-                <span>→</span>
+        historyList.innerHTML = sessions.map(session => `
+            <div class="history-item" data-key="${session.key}">
+                <div class="history-key">${session.key}</div>
+                <div class="history-time">${new Date(session.updated_at).toLocaleString()}</div>
+                <div class="history-arrow">→</div>
             </div>
         `).join('');
 
         // Add click handlers
-        list.querySelectorAll('.session-card').forEach(card => {
-            card.addEventListener('click', () => {
-                showSessionDetail(card.dataset.key);
-            });
+        historyList.querySelectorAll('.history-item').forEach(item => {
+            item.addEventListener('click', () => showSessionDetail(item.dataset.key));
         });
-    } catch (e) {
-        list.innerHTML = '<p class="loading-text">Error loading sessions</p>';
+
+        // Update session selector
+        updateSessionSelector(sessions);
+    } catch (error) {
+        historyList.innerHTML = `<p class="loading-text">Error loading sessions: ${error.message}</p>`;
     }
 }
 
-async function showSessionDetail(key) {
-    const list = document.getElementById('history-list');
-    const detail = document.getElementById('history-detail');
-    const keyEl = document.getElementById('history-session-key');
-    const messages = document.getElementById('history-messages');
+function updateSessionSelector(sessions) {
+    const select = document.getElementById('session-select');
+    select.innerHTML = '<option value="ui:default">Default</option>';
 
-    list.classList.add('hidden');
-    detail.classList.remove('hidden');
-    keyEl.textContent = key;
+    sessions.forEach(session => {
+        if (session.key !== 'ui:default') {
+            select.innerHTML += `<option value="${session.key}">${session.key}</option>`;
+        }
+    });
+
+    select.value = state.currentSession;
+}
+
+async function showSessionDetail(key) {
+    document.getElementById('history-list').classList.add('hidden');
+    document.getElementById('history-detail').classList.remove('hidden');
+    document.getElementById('history-session-key').textContent = key;
+
+    const messagesEl = document.getElementById('history-messages');
+    messagesEl.innerHTML = '<p class="loading-text">Loading...</p>';
 
     try {
         const session = await api.getSession(key);
 
-        messages.innerHTML = session.messages.map(msg => {
-            if (msg.role === 'user' || msg.role === 'assistant') {
-                const avatar = msg.role === 'user' ? '👤' : '🐈';
-                return `
-                    <div class="message ${msg.role}">
-                        <div class="message-avatar">${avatar}</div>
-                        <div class="message-content">${formatContent(msg.content)}</div>
-                    </div>
-                `;
-            }
-            return '';
-        }).join('');
-    } catch (e) {
-        messages.innerHTML = '<p class="loading-text">Error loading session</p>';
+        messagesEl.innerHTML = session.messages.map(msg => `
+            <div class="message ${msg.role}">
+                <div class="message-avatar">${msg.role === 'user' ? '👤' : '🐈'}</div>
+                <div class="message-content">
+                    <div class="message-label">${msg.role === 'user' ? 'You' : 'nanobot'}</div>
+                    <div class="message-text">${formatContent(msg.content)}</div>
+                </div>
+            </div>
+        `).join('');
+    } catch (error) {
+        messagesEl.innerHTML = `<p class="loading-text">Error: ${error.message}</p>`;
     }
-
-    // Delete button
-    document.getElementById('delete-session-btn').onclick = async () => {
-        if (confirm('Delete this session?')) {
-            await api.deleteSession(key);
-            loadSessions();
-        }
-    };
 }
 
-function formatDate(isoString) {
-    if (!isoString) return 'Unknown';
-    return new Date(isoString).toLocaleString();
+function hideSessionDetail() {
+    document.getElementById('history-list').classList.remove('hidden');
+    document.getElementById('history-detail').classList.add('hidden');
 }
 
-document.getElementById('back-to-list-btn')?.addEventListener('click', loadSessions);
-document.getElementById('refresh-history-btn')?.addEventListener('click', loadSessions);
+async function deleteCurrentSession() {
+    const key = document.getElementById('history-session-key').textContent;
+    if (!confirm(`Delete session "${key}"?`)) return;
 
-// ============================================================================
-// Config Tab
-// ============================================================================
+    try {
+        await api.deleteSession(key);
+        hideSessionDetail();
+        loadSessions();
+    } catch (error) {
+        alert(`Error: ${error.message}`);
+    }
+}
 
+// ============================================
+// Configuration
+// ============================================
 async function loadConfig() {
     try {
-        state.config = await api.getConfig();
-        renderConfig();
-    } catch (e) {
-        console.error('Failed to load config:', e);
+        const config = await api.getConfig();
+        state.config = config;
+
+        // Update model in metrics
+        if (config.agents?.defaults?.model) {
+            state.metrics.model = config.agents.defaults.model;
+            updateMetrics();
+        }
+
+        renderConfig(config);
+    } catch (error) {
+        console.error('Error loading config:', error);
     }
 }
 
-function renderConfig() {
-    const config = state.config;
-
+function renderConfig(config) {
     // Providers
-    const providersGrid = document.getElementById('providers-config');
-    providersGrid.innerHTML = '';
+    const providersEl = document.getElementById('providers-config');
+    const providers = ['openrouter', 'anthropic', 'openai', 'gemini', 'deepseek', 'vllm'];
 
-    const providers = config.providers || {};
-    Object.entries(providers).forEach(([name, providerConfig]) => {
-        const card = document.createElement('div');
-        card.className = 'config-card';
-        card.innerHTML = `
-            <h4>${name}</h4>
-            <div class="config-fields">
-                <div class="config-field">
-                    <label>API Key</label>
-                    <input type="password" 
-                           data-path="providers.${name}.apiKey" 
-                           value="${providerConfig.apiKey || ''}"
-                           placeholder="Enter API key">
+    providersEl.innerHTML = providers.map(name => {
+        const provider = config.providers?.[name] || {};
+        const displayName = name.charAt(0).toUpperCase() + name.slice(1);
+
+        return `
+            <div class="config-card">
+                <div class="config-card-title">
+                    <span>🤖</span> ${displayName}
                 </div>
-                ${providerConfig.apiBase !== undefined ? `
-                <div class="config-field">
-                    <label>API Base</label>
-                    <input type="text" 
-                           data-path="providers.${name}.apiBase" 
-                           value="${providerConfig.apiBase || ''}"
-                           placeholder="Optional">
+                <div class="config-fields">
+                    <div class="config-field">
+                        <label>API Key</label>
+                        <input type="password" 
+                               data-path="providers.${name}.apiKey"
+                               value="${provider.apiKey || provider.api_key || ''}"
+                               placeholder="Enter API key">
+                    </div>
+                    <div class="config-field">
+                        <label>API Base</label>
+                        <input type="text"
+                               data-path="providers.${name}.apiBase"
+                               value="${provider.apiBase || provider.api_base || ''}"
+                               placeholder="Optional custom base URL">
+                    </div>
                 </div>
-                ` : ''}
             </div>
         `;
-        providersGrid.appendChild(card);
-    });
+    }).join('');
 
     // Agent defaults
-    const agentConfig = document.getElementById('agent-config');
+    const agentEl = document.getElementById('agent-config');
     const defaults = config.agents?.defaults || {};
-    agentConfig.innerHTML = `
+
+    agentEl.innerHTML = `
         <div class="config-field">
-            <label>Model</label>
-            <input type="text" 
-                   data-path="agents.defaults.model" 
-                   value="${defaults.model || 'anthropic/claude-opus-4-5'}">
+            <label>Default Model</label>
+            <input type="text"
+                   data-path="agents.defaults.model"
+                   value="${defaults.model || 'openrouter/anthropic/claude-sonnet-4'}"
+                   placeholder="e.g., openrouter/anthropic/claude-sonnet-4">
         </div>
         <div class="config-field">
-            <label>Workspace</label>
-            <input type="text" 
-                   data-path="agents.defaults.workspace" 
-                   value="${defaults.workspace || '~/.nanobot/workspace'}">
-        </div>
-        <div class="config-field">
-            <label>Max Tokens</label>
-            <input type="number" 
-                   data-path="agents.defaults.maxTokens" 
-                   value="${defaults.maxTokens || 8192}">
-        </div>
-        <div class="config-field">
-            <label>Temperature</label>
-            <input type="number" 
-                   step="0.1"
-                   data-path="agents.defaults.temperature" 
-                   value="${defaults.temperature || 0.7}">
+            <label>Max Tool Iterations</label>
+            <input type="number"
+                   data-path="agents.defaults.maxToolIterations"
+                   value="${defaults.maxToolIterations || defaults.max_tool_iterations || 10}"
+                   min="1" max="50">
         </div>
     `;
 
     // Tools
-    const toolsConfig = document.getElementById('tools-config');
+    const toolsEl = document.getElementById('tools-config');
     const tools = config.tools || {};
-    toolsConfig.innerHTML = `
+
+    toolsEl.innerHTML = `
         <div class="config-field">
-            <label>Brave Search API Key</label>
-            <input type="password" 
-                   data-path="tools.web.search.apiKey" 
-                   value="${tools.web?.search?.apiKey || ''}"
-                   placeholder="Optional, for web search">
+            <label>Restrict to Workspace</label>
+            <select data-path="tools.restrictToWorkspace">
+                <option value="true" ${tools.restrictToWorkspace || tools.restrict_to_workspace ? 'selected' : ''}>Yes</option>
+                <option value="false" ${!tools.restrictToWorkspace && !tools.restrict_to_workspace ? 'selected' : ''}>No</option>
+            </select>
         </div>
         <div class="config-field">
-            <label>Shell Timeout (seconds)</label>
-            <input type="number" 
-                   data-path="tools.exec.timeout" 
-                   value="${tools.exec?.timeout || 60}">
+            <label>Web Search API Key (Brave)</label>
+            <input type="password"
+                   data-path="tools.web.search.apiKey"
+                   value="${tools.web?.search?.apiKey || tools.web?.search?.api_key || ''}"
+                   placeholder="Optional Brave Search API key">
         </div>
     `;
 
     // Raw JSON
-    const rawEditor = document.getElementById('raw-config-editor');
-    rawEditor.value = JSON.stringify(config, null, 2);
+    document.getElementById('raw-config-editor').value = JSON.stringify(config, null, 2);
 }
 
 async function saveConfig() {
+    // Collect values from inputs
+    const config = JSON.parse(JSON.stringify(state.config || {}));
+
+    document.querySelectorAll('[data-path]').forEach(input => {
+        const path = input.dataset.path.split('.');
+        let obj = config;
+
+        for (let i = 0; i < path.length - 1; i++) {
+            if (!obj[path[i]]) obj[path[i]] = {};
+            obj = obj[path[i]];
+        }
+
+        let value = input.value;
+        if (input.type === 'number') value = parseInt(value);
+        if (value === 'true') value = true;
+        if (value === 'false') value = false;
+
+        obj[path[path.length - 1]] = value;
+    });
+
     try {
-        // Collect values from form
-        const inputs = document.querySelectorAll('[data-path]');
-        const config = JSON.parse(JSON.stringify(state.config)); // Deep clone
-
-        inputs.forEach(input => {
-            const path = input.dataset.path.split('.');
-            let obj = config;
-
-            // Navigate to parent
-            for (let i = 0; i < path.length - 1; i++) {
-                if (!obj[path[i]]) obj[path[i]] = {};
-                obj = obj[path[i]];
-            }
-
-            // Set value
-            const key = path[path.length - 1];
-            let value = input.value;
-
-            if (input.type === 'number') {
-                value = parseFloat(value);
-            }
-
-            obj[key] = value;
-        });
-
         await api.saveConfig(config);
         state.config = config;
+
+        // Update model in metrics
+        if (config.agents?.defaults?.model) {
+            state.metrics.model = config.agents.defaults.model;
+            updateMetrics();
+        }
+
         alert('Configuration saved!');
-    } catch (e) {
-        alert(`Failed to save: ${e.message}`);
+    } catch (error) {
+        alert(`Error saving configuration: ${error.message}`);
     }
 }
 
-function initConfig() {
-    document.getElementById('save-config-btn').addEventListener('click', saveConfig);
-    document.getElementById('reload-config-btn').addEventListener('click', loadConfig);
+// ============================================
+// New Session
+// ============================================
+function createNewSession() {
+    const sessionId = `ui:${Date.now()}`;
+    state.currentSession = sessionId;
 
-    // Toggle raw JSON section
-    document.querySelector('.toggle-section')?.addEventListener('click', function () {
-        this.classList.toggle('open');
-        this.nextElementSibling.classList.toggle('hidden');
-    });
+    const select = document.getElementById('session-select');
+    const option = document.createElement('option');
+    option.value = sessionId;
+    option.textContent = sessionId;
+    select.appendChild(option);
+    select.value = sessionId;
+
+    // Clear chat
+    document.getElementById('chat-messages').innerHTML = `
+        <div class="welcome-message">
+            <div class="welcome-icon">🐈</div>
+            <h2>New Session Started</h2>
+            <p>Watch how the AI processes your requests step-by-step</p>
+        </div>
+    `;
+
+    clearMessageFlow();
+    resetSteps();
 }
 
-// ============================================================================
-// Initialize
-// ============================================================================
-
-document.addEventListener('DOMContentLoaded', () => {
-    initTabs();
-    initChat();
-    initConfig();
-
-    // Load status
-    api.getStatus().then(status => {
-        console.log('nanobot status:', status);
-    });
-
+// ============================================
+// Initialization
+// ============================================
+async function init() {
     // Connect WebSocket
     connectWebSocket();
 
-    // Load initial session
-    loadSessionMessages(state.currentSession);
-});
+    // Load initial data
+    try {
+        const status = await api.getStatus();
+        state.metrics.model = status.model;
+        updateMetrics();
+    } catch (e) {
+        console.error('Error loading status:', e);
+    }
+
+    // Load config to get system prompt (if available)
+    loadConfig();
+
+    // Setup event listeners
+    setupEventListeners();
+    setupCollapsibles();
+}
+
+function setupEventListeners() {
+    // Tab navigation
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.addEventListener('click', () => switchTab(item.dataset.tab));
+    });
+
+    // Chat input
+    const chatInput = document.getElementById('chat-input');
+    const sendBtn = document.getElementById('send-btn');
+
+    chatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            if (chatInput.value.trim() && !state.isProcessing) {
+                sendMessage(chatInput.value.trim());
+                chatInput.value = '';
+            }
+        }
+    });
+
+    // Auto-resize textarea
+    chatInput.addEventListener('input', () => {
+        chatInput.style.height = 'auto';
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+    });
+
+    sendBtn.addEventListener('click', () => {
+        if (chatInput.value.trim() && !state.isProcessing) {
+            sendMessage(chatInput.value.trim());
+            chatInput.value = '';
+            chatInput.style.height = 'auto';
+        }
+    });
+
+    // Session selector
+    document.getElementById('session-select').addEventListener('change', (e) => {
+        state.currentSession = e.target.value;
+    });
+
+    // New session
+    document.getElementById('new-session-btn').addEventListener('click', createNewSession);
+
+    // Debug panel toggle
+    document.getElementById('toggle-debug').addEventListener('click', toggleDebugPanel);
+
+    // History buttons
+    document.getElementById('refresh-history-btn')?.addEventListener('click', loadSessions);
+    document.getElementById('back-to-list-btn')?.addEventListener('click', hideSessionDetail);
+    document.getElementById('delete-session-btn')?.addEventListener('click', deleteCurrentSession);
+
+    // Config buttons
+    document.getElementById('reload-config-btn')?.addEventListener('click', loadConfig);
+    document.getElementById('save-config-btn')?.addEventListener('click', saveConfig);
+}
+
+// Start the app
+document.addEventListener('DOMContentLoaded', init);

@@ -1,12 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>nanobot 🐈</title>
+    <title>nanobot 🐈 - Learn Agentic AI</title>
     <link rel="stylesheet" href="/static/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
 </head>
+
 <body>
     <div class="app">
         <!-- Sidebar -->
@@ -39,41 +43,147 @@
 
         <!-- Main Content -->
         <main class="main-content">
+            <!-- Metrics Bar -->
+            <div class="metrics-bar">
+                <div class="metric">
+                    <span class="metric-icon">🤖</span>
+                    <span class="metric-label">Model:</span>
+                    <span id="metric-model" class="metric-value">Loading...</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-icon">📊</span>
+                    <span class="metric-label">Context:</span>
+                    <span id="metric-tokens" class="metric-value">0</span>
+                    <span class="metric-unit">/</span>
+                    <span id="metric-limit" class="metric-value">128K</span>
+                    <div class="token-bar">
+                        <div id="token-bar-fill" class="token-bar-fill" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="metric">
+                    <span class="metric-icon">⬆️</span>
+                    <span class="metric-label">In:</span>
+                    <span id="metric-input" class="metric-value">0</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-icon">⬇️</span>
+                    <span class="metric-label">Out:</span>
+                    <span id="metric-output" class="metric-value">0</span>
+                </div>
+                <button id="toggle-debug" class="btn btn-sm toggle-debug active">
+                    <span>🔍 Debug</span>
+                </button>
+            </div>
+
             <!-- Chat Tab -->
             <section id="chat-tab" class="tab-content active">
-                <div class="chat-header">
-                    <h1>Chat with nanobot</h1>
-                    <div class="session-selector">
-                        <label for="session-select">Session:</label>
-                        <select id="session-select">
-                            <option value="ui:default">Default</option>
-                        </select>
-                        <button id="new-session-btn" class="btn btn-sm">+ New</button>
-                    </div>
-                </div>
-                <div class="chat-container">
-                    <div id="chat-messages" class="chat-messages">
-                        <div class="welcome-message">
-                            <div class="welcome-icon">🐈</div>
-                            <h2>Welcome to nanobot!</h2>
-                            <p>I'm your ultra-lightweight AI assistant. Ask me anything!</p>
+                <div class="split-layout">
+                    <!-- Chat Panel -->
+                    <div class="chat-panel">
+                        <div class="chat-header">
+                            <h1>Chat with nanobot</h1>
+                            <div class="session-selector">
+                                <label for="session-select">Session:</label>
+                                <select id="session-select">
+                                    <option value="ui:default">Default</option>
+                                </select>
+                                <button id="new-session-btn" class="btn btn-sm">+ New</button>
+                            </div>
+                        </div>
+                        <div class="chat-container">
+                            <div id="chat-messages" class="chat-messages">
+                                <div class="welcome-message">
+                                    <div class="welcome-icon">🐈</div>
+                                    <h2>Welcome to nanobot!</h2>
+                                    <p>Watch how the AI processes your requests step-by-step</p>
+                                    <div class="welcome-features">
+                                        <div class="feature"><span class="feature-dot user"></span> Your messages</div>
+                                        <div class="feature"><span class="feature-dot assistant"></span> AI responses
+                                        </div>
+                                        <div class="feature"><span class="feature-dot tool"></span> Tool executions
+                                        </div>
+                                        <div class="feature"><span class="feature-dot system"></span> System info</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="chat-input-container">
+                            <textarea id="chat-input" placeholder="Type your message... (Shift+Enter for new line)"
+                                rows="1"></textarea>
+                            <button id="send-btn" class="btn btn-primary">
+                                <span>Send</span>
+                                <span class="send-icon">→</span>
+                            </button>
                         </div>
                     </div>
-                    <div id="tool-progress" class="tool-progress hidden">
-                        <div class="progress-spinner"></div>
-                        <span id="tool-status">Processing...</span>
+
+                    <!-- Debug Panel -->
+                    <div id="debug-panel" class="debug-panel">
+                        <div class="debug-section">
+                            <h3 class="debug-title">
+                                <span class="debug-icon">🔄</span>
+                                Processing Steps
+                            </h3>
+                            <div id="processing-steps" class="processing-steps">
+                                <div class="step waiting" data-step="receive">
+                                    <span class="step-num">1</span>
+                                    <span class="step-label">Receive Input</span>
+                                    <span class="step-status">⏳</span>
+                                </div>
+                                <div class="step waiting" data-step="context">
+                                    <span class="step-num">2</span>
+                                    <span class="step-label">Build Context</span>
+                                    <span class="step-status">⏳</span>
+                                </div>
+                                <div class="step waiting" data-step="llm">
+                                    <span class="step-num">3</span>
+                                    <span class="step-label">Call LLM</span>
+                                    <span class="step-status">⏳</span>
+                                </div>
+                                <div class="step waiting" data-step="tools">
+                                    <span class="step-num">4</span>
+                                    <span class="step-label">Execute Tools</span>
+                                    <span class="step-status">⏳</span>
+                                </div>
+                                <div class="step waiting" data-step="response">
+                                    <span class="step-num">5</span>
+                                    <span class="step-label">Generate Response</span>
+                                    <span class="step-status">⏳</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="debug-section collapsible">
+                            <h3 class="debug-title toggle-section">
+                                <span class="debug-icon">📝</span>
+                                System Prompt
+                                <span class="toggle-icon">▼</span>
+                            </h3>
+                            <div class="section-content">
+                                <pre id="system-prompt" class="code-block system-prompt">Loading...</pre>
+                            </div>
+                        </div>
+
+                        <div class="debug-section">
+                            <h3 class="debug-title">
+                                <span class="debug-icon">🔧</span>
+                                Tool Calls
+                            </h3>
+                            <div id="tool-calls" class="tool-calls">
+                                <div class="empty-state">No tool calls yet</div>
+                            </div>
+                        </div>
+
+                        <div class="debug-section">
+                            <h3 class="debug-title">
+                                <span class="debug-icon">📨</span>
+                                Message Flow
+                            </h3>
+                            <div id="message-flow" class="message-flow">
+                                <div class="empty-state">Send a message to see the flow</div>
+                            </div>
+                        </div>
                     </div>
-                </div>
-                <div class="chat-input-container">
-                    <textarea 
-                        id="chat-input" 
-                        placeholder="Type your message... (Shift+Enter for new line)"
-                        rows="1"
-                    ></textarea>
-                    <button id="send-btn" class="btn btn-primary">
-                        <span>Send</span>
-                        <span class="send-icon">→</span>
-                    </button>
                 </div>
             </section>
 
@@ -157,4 +267,5 @@
 
     <script src="/static/app.js"></script>
 </body>
+
 </html>

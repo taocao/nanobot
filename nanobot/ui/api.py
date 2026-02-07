@@ -215,14 +215,42 @@ async def _process_with_updates(
     session_id: str,
     websocket: WebSocket
 ) -> str:
-    """Process a message and send tool execution updates via WebSocket."""
-    from nanobot.bus.events import InboundMessage
+    """Process a message and send detailed debug updates via WebSocket.
+    
+    This function provides educational insight into how the agent works:
+    - Step-by-step processing visualization
+    - Token usage metrics
+    - System prompt display
+    - Tool execution details
+    """
     import json
+    import time
+    
+    # ========================================
+    # Step 1: Receive Input
+    # ========================================
+    await websocket.send_json({
+        "type": "debug_step",
+        "step": "receive_input",
+        "status": "complete",
+        "details": f"Received: {message[:50]}..."
+    })
+    
+    # ========================================
+    # Step 2: Build Context
+    # ========================================
+    await websocket.send_json({
+        "type": "debug_step",
+        "step": "build_context",
+        "status": "start",
+        "details": "Building context with history and system prompt..."
+    })
     
     # Get session
     session = agent.sessions.get_or_create(session_id)
     
-    # Build context
+    # Build context message
+    from nanobot.bus.events import InboundMessage
     msg = InboundMessage(
         channel="ui",
         sender_id="user",
@@ -247,7 +275,7 @@ async def _process_with_updates(
     if isinstance(cron_tool, CronTool):
         cron_tool.set_context(msg.channel, msg.chat_id)
     
-    # Build messages
+    # Build messages (this includes system prompt)
     messages = agent.context.build_messages(
         history=session.get_history(),
         current_message=message,
@@ -255,12 +283,59 @@ async def _process_with_updates(
         chat_id=msg.chat_id,
     )
     
-    # Agent loop with updates
+    # Extract and send system prompt for educational display
+    system_prompt = ""
+    for m in messages:
+        if m.get("role") == "system":
+            system_prompt = m.get("content", "")
+            break
+    
+    if system_prompt:
+        await websocket.send_json({
+            "type": "debug_prompt",
+            "content": system_prompt[:2000] + ("..." if len(system_prompt) > 2000 else "")
+        })
+    
+    # Estimate token counts (rough: ~4 chars per token)
+    context_tokens = sum(len(str(m.get("content", ""))) // 4 for m in messages)
+    
+    # Send metrics
+    await websocket.send_json({
+        "type": "debug_metrics",
+        "content": {
+            "model": agent.model,
+            "contextTokens": context_tokens,
+            "contextLimit": 128000,  # Default assumption
+            "inputTokens": len(message) // 4,
+            "outputTokens": 0
+        }
+    })
+    
+    await websocket.send_json({
+        "type": "debug_step",
+        "step": "build_context",
+        "status": "complete",
+        "details": f"Context built: {len(messages)} messages, ~{context_tokens} tokens"
+    })
+    
+    # ========================================
+    # Step 3: Call LLM (loop)
+    # ========================================
     iteration = 0
     final_content = None
+    total_output_tokens = 0
     
     while iteration < agent.max_iterations:
         iteration += 1
+        
+        await websocket.send_json({
+            "type": "debug_step",
+            "step": "call_llm",
+            "status": "start",
+            "details": f"Iteration {iteration}: Calling {agent.model}..."
+        })
+        
+        start_time = time.time()
         
         # Call LLM
         response = await agent.provider.chat(
@@ -269,15 +344,51 @@ async def _process_with_updates(
             model=agent.model
         )
         
+        elapsed = time.time() - start_time
+        
+        # Update output tokens from response
+        output_tokens = response.usage.get("completion_tokens", 0)
+        if output_tokens == 0 and response.content:
+            output_tokens = len(response.content) // 4
+        total_output_tokens += output_tokens
+        
+        await websocket.send_json({
+            "type": "debug_step",
+            "step": "call_llm",
+            "status": "complete",
+            "details": f"LLM responded in {elapsed:.1f}s, ~{output_tokens} tokens"
+        })
+        
+        # Update metrics with output tokens
+        await websocket.send_json({
+            "type": "debug_metrics",
+            "content": {
+                "model": agent.model,
+                "contextTokens": context_tokens + total_output_tokens,
+                "contextLimit": 128000,
+                "inputTokens": len(message) // 4,
+                "outputTokens": total_output_tokens
+            }
+        })
+        
         if response.has_tool_calls:
-            # Send tool call info
+            # ========================================
+            # Step 4: Execute Tools
+            # ========================================
+            await websocket.send_json({
+                "type": "debug_step",
+                "step": "execute_tools",
+                "status": "start",
+                "details": f"Executing {len(response.tool_calls)} tool(s)..."
+            })
+            
             tool_names = [tc.name for tc in response.tool_calls]
             await websocket.send_json({
                 "type": "tools",
                 "content": f"Executing: {', '.join(tool_names)}"
             })
             
-            # Add assistant message
+            # Add assistant message with tool calls
             tool_call_dicts = [
                 {
                     "id": tc.id,
@@ -293,30 +404,61 @@ async def _process_with_updates(
                 messages, response.content, tool_call_dicts
             )
             
-            # Execute tools
+            # Execute each tool and send detailed results
             for tool_call in response.tool_calls:
+                tool_start = time.time()
                 result = await agent.tools.execute(tool_call.name, tool_call.arguments)
+                tool_elapsed = time.time() - tool_start
+                
                 messages = agent.context.add_tool_result(
                     messages, tool_call.id, tool_call.name, result
                 )
                 
-                # Send brief result update
-                result_preview = result[:200] + "..." if len(result) > 200 else result
+                # Send detailed tool result
+                result_preview = result[:300] + "..." if len(result) > 300 else result
                 await websocket.send_json({
                     "type": "tool_result",
                     "tool": tool_call.name,
-                    "content": result_preview
+                    "arguments": tool_call.arguments,
+                    "content": result_preview,
+                    "elapsed": f"{tool_elapsed:.2f}s"
                 })
+            
+            await websocket.send_json({
+                "type": "debug_step",
+                "step": "execute_tools",
+                "status": "complete",
+                "details": f"Completed {len(response.tool_calls)} tool(s)"
+            })
         else:
+            # No tool calls - we have the final response
             final_content = response.content
             break
     
+    # ========================================
+    # Step 5: Generate Response
+    # ========================================
+    await websocket.send_json({
+        "type": "debug_step",
+        "step": "generate_response",
+        "status": "start",
+        "details": "Preparing final response..."
+    })
+    
     if final_content is None:
-        final_content = "Processing complete."
+        final_content = "Processing complete (max iterations reached)."
     
     # Save to session
     session.add_message("user", message)
     session.add_message("assistant", final_content)
     agent.sessions.save(session)
     
+    await websocket.send_json({
+        "type": "debug_step",
+        "step": "generate_response",
+        "status": "complete",
+        "details": f"Response generated, session saved ({len(final_content)} chars)"
+    })
+    
     return final_content
+
