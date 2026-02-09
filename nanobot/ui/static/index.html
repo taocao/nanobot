@@ -24,6 +24,10 @@
                     <span class="nav-icon">💬</span>
                     <span>Chat</span>
                 </button>
+                <button class="nav-item" data-tab="logs">
+                    <span class="nav-icon">📋</span>
+                    <span>Logs</span>
+                </button>
                 <button class="nav-item" data-tab="history">
                     <span class="nav-icon">📜</span>
                     <span>History</span>
@@ -125,30 +129,50 @@
                                 Processing Steps
                             </h3>
                             <div id="processing-steps" class="processing-steps">
-                                <div class="step waiting" data-step="receive">
-                                    <span class="step-num">1</span>
-                                    <span class="step-label">Receive Input</span>
-                                    <span class="step-status">⏳</span>
+                                <div class="step waiting expandable" data-step="receive">
+                                    <div class="step-header">
+                                        <span class="step-num">1</span>
+                                        <span class="step-label">Receive Input</span>
+                                        <span class="step-status">⏳</span>
+                                        <span class="step-expand">▶</span>
+                                    </div>
+                                    <div class="step-details hidden"></div>
                                 </div>
-                                <div class="step waiting" data-step="context">
-                                    <span class="step-num">2</span>
-                                    <span class="step-label">Build Context</span>
-                                    <span class="step-status">⏳</span>
+                                <div class="step waiting expandable" data-step="context">
+                                    <div class="step-header">
+                                        <span class="step-num">2</span>
+                                        <span class="step-label">Build Context</span>
+                                        <span class="step-status">⏳</span>
+                                        <span class="step-expand">▶</span>
+                                    </div>
+                                    <div class="step-details hidden"></div>
                                 </div>
-                                <div class="step waiting" data-step="llm">
-                                    <span class="step-num">3</span>
-                                    <span class="step-label">Call LLM</span>
-                                    <span class="step-status">⏳</span>
+                                <div class="step waiting expandable" data-step="llm">
+                                    <div class="step-header">
+                                        <span class="step-num">3</span>
+                                        <span class="step-label">Call LLM</span>
+                                        <span class="step-status">⏳</span>
+                                        <span class="step-expand">▶</span>
+                                    </div>
+                                    <div class="step-details hidden"></div>
                                 </div>
-                                <div class="step waiting" data-step="tools">
-                                    <span class="step-num">4</span>
-                                    <span class="step-label">Execute Tools</span>
-                                    <span class="step-status">⏳</span>
+                                <div class="step waiting expandable" data-step="tools">
+                                    <div class="step-header">
+                                        <span class="step-num">4</span>
+                                        <span class="step-label">Execute Tools</span>
+                                        <span class="step-status">⏳</span>
+                                        <span class="step-expand">▶</span>
+                                    </div>
+                                    <div class="step-details hidden"></div>
                                 </div>
-                                <div class="step waiting" data-step="response">
-                                    <span class="step-num">5</span>
-                                    <span class="step-label">Generate Response</span>
-                                    <span class="step-status">⏳</span>
+                                <div class="step waiting expandable" data-step="response">
+                                    <div class="step-header">
+                                        <span class="step-num">5</span>
+                                        <span class="step-label">Generate Response</span>
+                                        <span class="step-status">⏳</span>
+                                        <span class="step-expand">▶</span>
+                                    </div>
+                                    <div class="step-details hidden"></div>
                                 </div>
                             </div>
                         </div>
@@ -184,6 +208,27 @@
                             </div>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            <!-- Logs Tab -->
+            <section id="logs-tab" class="tab-content">
+                <div class="page-header">
+                    <h1>Execution Logs</h1>
+                    <button id="refresh-logs-btn" class="btn btn-sm">🔄 Refresh</button>
+                </div>
+                <p class="logs-description">View detailed debug information from past requests. Each log contains
+                    step-by-step execution data, tool calls, and metrics.</p>
+                <div id="logs-list" class="logs-list">
+                    <p class="loading-text">Loading logs...</p>
+                </div>
+                <div id="log-detail" class="log-detail hidden">
+                    <div class="log-detail-header">
+                        <button id="back-to-logs-btn" class="btn btn-sm">← Back</button>
+                        <h2 id="log-title">Log Details</h2>
+                        <button id="delete-log-btn" class="btn btn-sm btn-danger">🗑️ Delete</button>
+                    </div>
+                    <div id="log-content" class="log-content"></div>
                 </div>
             </section>
 

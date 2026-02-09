@@ -1199,3 +1199,252 @@ pre.code-block code {
         display: none;
     }
 }
+
+/* ============================================
+   Expandable Step Details
+   ============================================ */
+.step.expandable {
+    flex-direction: column;
+    align-items: stretch;
+    cursor: pointer;
+}
+
+.step-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.step-expand {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-left: auto;
+    transition: transform 0.2s ease;
+}
+
+.step.expanded .step-expand {
+    transform: rotate(90deg);
+}
+
+.step-details {
+    margin-top: 12px;
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.step-details.hidden {
+    display: none;
+}
+
+.step-details .detail-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.step-details .detail-label {
+    color: var(--text-muted);
+    min-width: 100px;
+}
+
+.step-details .detail-value {
+    color: var(--color-assistant);
+}
+
+.step-details pre {
+    background: rgba(0, 0, 0, 0.4);
+    padding: 8px;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin-top: 8px;
+}
+
+/* ============================================
+   Logs Tab Styles
+   ============================================ */
+.logs-description {
+    color: var(--text-secondary);
+    padding: 0 24px 16px;
+    font-size: 14px;
+}
+
+.logs-list {
+    padding: 0 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+    max-height: calc(100vh - 200px);
+}
+
+.log-item {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px;
+    background: var(--bg-card);
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-left: 3px solid transparent;
+}
+
+.log-item:hover {
+    background: rgba(0, 212, 255, 0.05);
+    border-left-color: var(--color-assistant);
+}
+
+.log-item.has-error {
+    border-left-color: var(--color-error);
+}
+
+.log-item-time {
+    font-size: 12px;
+    color: var(--text-muted);
+    min-width: 140px;
+}
+
+.log-item-message {
+    flex: 1;
+    font-size: 14px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.log-item-meta {
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.log-item-meta span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.log-detail {
+    padding: 24px;
+    overflow-y: auto;
+}
+
+.log-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.log-detail-header h2 {
+    flex: 1;
+    font-size: 16px;
+}
+
+.log-content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.log-section {
+    background: var(--bg-card);
+    border-radius: var(--border-radius);
+    padding: 16px;
+}
+
+.log-section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.log-section-content {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.log-step-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.log-step-item {
+    padding: 10px 12px;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.log-step-item .step-icon {
+    font-size: 16px;
+}
+
+.log-step-item .step-summary {
+    flex: 1;
+    font-size: 13px;
+}
+
+.log-tool-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.log-tool-item {
+    padding: 12px;
+    background: rgba(245, 158, 11, 0.1);
+    border-left: 3px solid var(--color-tool);
+    border-radius: 0 8px 8px 0;
+}
+
+.log-tool-item .tool-name {
+    font-weight: 600;
+    color: var(--color-tool);
+    margin-bottom: 8px;
+}
+
+.log-tool-item .tool-args {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 8px;
+    border-radius: 4px;
+    max-height: 100px;
+    overflow-y: auto;
+}
+
+.log-tool-item .tool-result {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--color-tool-result);
+    background: rgba(16, 185, 129, 0.1);
+    padding: 8px;
+    border-radius: 4px;
+    max-height: 150px;
+    overflow-y: auto;
+}

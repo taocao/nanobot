@@ -17,6 +17,7 @@ from nanobot.bus.queue import MessageBus
 from nanobot.bus.events import InboundMessage
 from nanobot.providers.litellm_provider import LiteLLMProvider
 from nanobot.agent.loop import AgentLoop
+from nanobot.ui.execution_log import ExecutionLog
 
 
 class ChatMessage(BaseModel):
@@ -54,6 +55,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.bus = MessageBus()
     app.state.agent = None
     app.state.agent_lock = asyncio.Lock()
+    app.state.execution_log = ExecutionLog()
     
     # Static files directory
     static_dir = Path(__file__).parent / "static"
@@ -118,6 +120,31 @@ def create_app(config: Config | None = None) -> FastAPI:
             return {"status": "ok", "message": "Session deleted"}
         raise HTTPException(status_code=404, detail="Session not found")
     
+    # ========================================
+    # Execution Log Endpoints
+    # ========================================
+    @app.get("/api/logs")
+    async def list_logs(session_id: str | None = None, limit: int = 50):
+        """List execution logs, optionally filtered by session."""
+        logs = app.state.execution_log.list_logs(session_id=session_id, limit=limit)
+        return {"logs": logs}
+    
+    @app.get("/api/logs/{session_id}/{log_id}")
+    async def get_log(session_id: str, log_id: str):
+        """Get a specific execution log."""
+        log = app.state.execution_log.get_log(session_id, log_id)
+        if log is None:
+            raise HTTPException(status_code=404, detail="Log not found")
+        return log
+    
+    @app.delete("/api/logs/{session_id}/{log_id}")
+    async def delete_log(session_id: str, log_id: str):
+        """Delete a specific execution log."""
+        deleted = app.state.execution_log.delete_log(session_id, log_id)
+        if deleted:
+            return {"status": "ok", "message": "Log deleted"}
+        raise HTTPException(status_code=404, detail="Log not found")
+    
     @app.get("/api/status")
     async def get_status():
         """Get nanobot status."""
@@ -165,7 +192,8 @@ def create_app(config: Config | None = None) -> FastAPI:
                 # Process with streaming updates
                 try:
                     response = await _process_with_updates(
-                        agent, message, session_id, websocket
+                        agent, message, session_id, websocket,
+                        execution_log=app.state.execution_log
                     )
                     await websocket.send_json({"type": "response", "content": response})
                 except Exception as e:
@@ -213,7 +241,8 @@ async def _process_with_updates(
     agent: AgentLoop,
     message: str,
     session_id: str,
-    websocket: WebSocket
+    websocket: WebSocket,
+    execution_log: ExecutionLog | None = None
 ) -> str:
     """Process a message and send detailed debug updates via WebSocket.
     
@@ -222,19 +251,33 @@ async def _process_with_updates(
     - Token usage metrics
     - System prompt display
     - Tool execution details
+    - Persistent execution logging
     """
     import json
     import time
     
+    # Create execution record for persistent logging
+    record = None
+    if execution_log:
+        record = execution_log.create_record(session_id, message, agent.model)
+    
     # ========================================
     # Step 1: Receive Input
     # ========================================
+    step_detail = {
+        "full_message": message,
+        "message_length": len(message),
+        "timestamp": time.strftime("%H:%M:%S")
+    }
     await websocket.send_json({
         "type": "debug_step",
         "step": "receive_input",
         "status": "complete",
-        "details": f"Received: {message[:50]}..."
+        "details": f"Received: {message[:50]}...",
+        "step_detail": step_detail
     })
+    if record:
+        record.add_step("receive_input", "complete", f"Received {len(message)} chars", **step_detail)
     
     # ========================================
     # Step 2: Build Context
@@ -311,12 +354,23 @@ async def _process_with_updates(
         }
     })
     
+    step_detail = {
+        "message_count": len(messages),
+        "history_count": len(session.get_history()),
+        "context_tokens": context_tokens,
+        "system_prompt_preview": system_prompt[:500] + "..." if len(system_prompt) > 500 else system_prompt,
+        "system_prompt_full": system_prompt
+    }
     await websocket.send_json({
         "type": "debug_step",
         "step": "build_context",
         "status": "complete",
-        "details": f"Context built: {len(messages)} messages, ~{context_tokens} tokens"
+        "details": f"Context built: {len(messages)} messages, ~{context_tokens} tokens",
+        "step_detail": step_detail
     })
+    if record:
+        record.add_step("build_context", "complete", f"{len(messages)} messages, ~{context_tokens} tokens", **step_detail)
+        record.system_prompt = system_prompt
     
     # ========================================
     # Step 3: Call LLM (loop)
@@ -352,12 +406,24 @@ async def _process_with_updates(
             output_tokens = len(response.content) // 4
         total_output_tokens += output_tokens
         
+        step_detail = {
+            "iteration": iteration,
+            "model": agent.model,
+            "elapsed_seconds": round(elapsed, 2),
+            "output_tokens": output_tokens,
+            "has_tool_calls": response.has_tool_calls,
+            "tool_calls": [tc.name for tc in response.tool_calls] if response.has_tool_calls else [],
+            "response_preview": response.content[:300] if response.content else ""
+        }
         await websocket.send_json({
             "type": "debug_step",
             "step": "call_llm",
             "status": "complete",
-            "details": f"LLM responded in {elapsed:.1f}s, ~{output_tokens} tokens"
+            "details": f"LLM responded in {elapsed:.1f}s, ~{output_tokens} tokens",
+            "step_detail": step_detail
         })
+        if record:
+            record.add_step("call_llm", "complete", f"Iteration {iteration}: {elapsed:.1f}s, {output_tokens} tokens", **step_detail)
         
         # Update metrics with output tokens
         await websocket.send_json({
@@ -421,15 +487,25 @@ async def _process_with_updates(
                     "tool": tool_call.name,
                     "arguments": tool_call.arguments,
                     "content": result_preview,
+                    "result_full": result,  # Full result for expansion
                     "elapsed": f"{tool_elapsed:.2f}s"
                 })
+                if record:
+                    record.add_tool_execution(tool_call.name, tool_call.arguments, result, tool_elapsed)
             
+            step_detail = {
+                "tool_count": len(response.tool_calls),
+                "tools_executed": tool_names
+            }
             await websocket.send_json({
                 "type": "debug_step",
                 "step": "execute_tools",
                 "status": "complete",
-                "details": f"Completed {len(response.tool_calls)} tool(s)"
+                "details": f"Completed {len(response.tool_calls)} tool(s)",
+                "step_detail": step_detail
             })
+            if record:
+                record.add_step("execute_tools", "complete", f"{len(response.tool_calls)} tools", **step_detail)
         else:
             # No tool calls - we have the final response
             final_content = response.content
@@ -453,12 +529,37 @@ async def _process_with_updates(
     session.add_message("assistant", final_content)
     agent.sessions.save(session)
     
+    step_detail = {
+        "response_length": len(final_content),
+        "total_iterations": iteration,
+        "session_id": session_id,
+        "response_preview": final_content[:500] if final_content else ""
+    }
     await websocket.send_json({
         "type": "debug_step",
         "step": "generate_response",
         "status": "complete",
-        "details": f"Response generated, session saved ({len(final_content)} chars)"
+        "details": f"Response generated, session saved ({len(final_content)} chars)",
+        "step_detail": step_detail
     })
+    
+    # Save execution log for persistence
+    if record:
+        record.assistant_response = final_content
+        record.iterations = iteration
+        record.metrics = {
+            "context_tokens": context_tokens,
+            "output_tokens": total_output_tokens,
+            "model": agent.model
+        }
+        record.add_step("generate_response", "complete", f"{len(final_content)} chars", **step_detail)
+        log_id = execution_log.save(record)
+        # Send log_id to client for reference
+        await websocket.send_json({
+            "type": "execution_log_saved",
+            "log_id": log_id,
+            "session_id": session_id
+        })
     
     return final_content
 

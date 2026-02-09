@@ -68,6 +68,27 @@ const api = {
     async getStatus() {
         const res = await fetch(`${this.baseUrl}/api/status`);
         return res.json();
+    },
+
+    // Logs API
+    async getLogs(sessionId = null, limit = 50) {
+        const params = new URLSearchParams();
+        if (sessionId) params.set('session_id', sessionId);
+        params.set('limit', limit);
+        const res = await fetch(`${this.baseUrl}/api/logs?${params}`);
+        return res.json();
+    },
+
+    async getLog(sessionId, logId) {
+        const res = await fetch(`${this.baseUrl}/api/logs/${encodeURIComponent(sessionId)}/${encodeURIComponent(logId)}`);
+        return res.json();
+    },
+
+    async deleteLog(sessionId, logId) {
+        const res = await fetch(`${this.baseUrl}/api/logs/${encodeURIComponent(sessionId)}/${encodeURIComponent(logId)}`, {
+            method: 'DELETE'
+        });
+        return res.json();
     }
 };
 
@@ -184,11 +205,45 @@ function handleDebugStep(data) {
         setStep(step, 'active');
     } else if (data.status === 'complete') {
         setStep(step, 'complete');
+        // Populate step details if available
+        if (data.step_detail) {
+            populateStepDetails(step, data.step_detail);
+        }
     }
 
     if (data.details) {
         addToMessageFlow('system', data.details);
     }
+}
+
+function populateStepDetails(stepName, detail) {
+    const stepEl = document.querySelector(`[data-step="${stepName}"]`);
+    if (!stepEl) return;
+
+    const detailsEl = stepEl.querySelector('.step-details');
+    if (!detailsEl) return;
+
+    let html = '';
+    for (const [key, value] of Object.entries(detail)) {
+        // Skip very long values in summary, show preview
+        let displayValue = value;
+        if (typeof value === 'string' && value.length > 200) {
+            displayValue = value.substring(0, 200) + '...';
+        } else if (typeof value === 'object') {
+            displayValue = JSON.stringify(value, null, 2);
+            if (displayValue.length > 200) {
+                displayValue = displayValue.substring(0, 200) + '...';
+            }
+        }
+        html += `<div class="detail-row"><span class="detail-label">${key}:</span><span class="detail-value">${escapeHtml(String(displayValue))}</span></div>`;
+    }
+    detailsEl.innerHTML = html;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 function handleDebugMetrics(metrics) {
@@ -210,7 +265,8 @@ function setStep(stepName, status) {
     const steps = document.querySelectorAll('.step');
     steps.forEach(step => {
         if (step.dataset.step === stepName) {
-            step.className = `step ${status}`;
+            // Preserve expandable class
+            step.className = `step ${status} expandable`;
         }
     });
 }
@@ -218,7 +274,28 @@ function setStep(stepName, status) {
 function resetSteps() {
     const steps = document.querySelectorAll('.step');
     steps.forEach(step => {
-        step.className = 'step waiting';
+        step.className = 'step waiting expandable';
+        step.classList.remove('expanded');
+        const details = step.querySelector('.step-details');
+        if (details) {
+            details.classList.add('hidden');
+            details.innerHTML = '';
+        }
+    });
+}
+
+function setupStepExpansion() {
+    document.querySelectorAll('.step.expandable').forEach(step => {
+        const header = step.querySelector('.step-header');
+        if (header) {
+            header.addEventListener('click', () => {
+                const details = step.querySelector('.step-details');
+                if (details && details.innerHTML.trim()) {
+                    step.classList.toggle('expanded');
+                    details.classList.toggle('hidden');
+                }
+            });
+        }
     });
 }
 
@@ -460,6 +537,8 @@ function switchTab(tabName) {
         loadSessions();
     } else if (tabName === 'config') {
         loadConfig();
+    } else if (tabName === 'logs') {
+        loadLogs();
     }
 }
 
@@ -719,6 +798,150 @@ function createNewSession() {
 }
 
 // ============================================
+// Execution Logs
+// ============================================
+let currentLog = null;
+
+async function loadLogs() {
+    const logsList = document.getElementById('logs-list');
+    logsList.innerHTML = '<p class="loading-text">Loading logs...</p>';
+
+    try {
+        const { logs } = await api.getLogs();
+
+        if (logs.length === 0) {
+            logsList.innerHTML = '<p class="loading-text">No execution logs yet. Send some messages to generate logs!</p>';
+            return;
+        }
+
+        logsList.innerHTML = logs.map(log => `
+            <div class="log-item ${log.has_error ? 'has-error' : ''}" 
+                 data-session="${log.session_id}" 
+                 data-log-id="${log.log_id}">
+                <span class="log-item-time">${formatLogTime(log.started_at)}</span>
+                <span class="log-item-message">${log.message_preview || '(empty)'}</span>
+                <span class="log-item-meta">
+                    <span>🔧 ${log.tool_count}</span>
+                    <span>🔄 ${log.iterations}</span>
+                    <span>🤖 ${log.model || 'unknown'}</span>
+                </span>
+            </div>
+        `).join('');
+
+        // Add click handlers
+        logsList.querySelectorAll('.log-item').forEach(item => {
+            item.addEventListener('click', () => showLogDetail(item.dataset.session, item.dataset.logId));
+        });
+    } catch (error) {
+        logsList.innerHTML = `<p class="loading-text">Error loading logs: ${error.message}</p>`;
+    }
+}
+
+function formatLogTime(isoString) {
+    if (!isoString) return 'Unknown';
+    const date = new Date(isoString);
+    return date.toLocaleString();
+}
+
+async function showLogDetail(sessionId, logId) {
+    document.getElementById('logs-list').classList.add('hidden');
+    document.getElementById('log-detail').classList.remove('hidden');
+
+    const logContent = document.getElementById('log-content');
+    logContent.innerHTML = '<p class="loading-text">Loading...</p>';
+
+    try {
+        const log = await api.getLog(sessionId, logId);
+        currentLog = { sessionId, logId };
+
+        document.getElementById('log-title').textContent = `Log ${logId} - ${formatLogTime(log.started_at)}`;
+
+        logContent.innerHTML = `
+            <!-- Overview -->
+            <div class="log-section">
+                <div class="log-section-title">📊 Overview</div>
+                <div class="log-section-content">
+Model: ${log.model || 'unknown'}
+Iterations: ${log.iterations}
+Started: ${formatLogTime(log.started_at)}
+Completed: ${formatLogTime(log.completed_at)}
+                </div>
+            </div>
+
+            <!-- User Message -->
+            <div class="log-section">
+                <div class="log-section-title">👤 User Message</div>
+                <div class="log-section-content">${escapeHtml(log.user_message)}</div>
+            </div>
+
+            <!-- Processing Steps -->
+            <div class="log-section">
+                <div class="log-section-title">🔄 Processing Steps</div>
+                <div class="log-step-list">
+                    ${(log.steps || []).map(step => `
+                        <div class="log-step-item">
+                            <span class="step-icon">${step.status === 'complete' ? '✅' : '⏳'}</span>
+                            <span class="step-summary"><strong>${step.step}</strong>: ${step.summary || ''}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+
+            <!-- Tool Executions -->
+            ${(log.tool_executions && log.tool_executions.length > 0) ? `
+            <div class="log-section">
+                <div class="log-section-title">🔧 Tool Executions</div>
+                <div class="log-tool-list">
+                    ${log.tool_executions.map(tool => `
+                        <div class="log-tool-item">
+                            <div class="tool-name">${tool.tool_name} (${tool.elapsed_seconds?.toFixed(2)}s)</div>
+                            <div class="tool-args">${escapeHtml(JSON.stringify(tool.arguments, null, 2))}</div>
+                            <div class="tool-result">${escapeHtml(tool.result.substring(0, 500))}${tool.result.length > 500 ? '...' : ''}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+            ` : ''}
+
+            <!-- Assistant Response -->
+            <div class="log-section">
+                <div class="log-section-title">🐈 Assistant Response</div>
+                <div class="log-section-content">${escapeHtml(log.assistant_response || '(no response)')}</div>
+            </div>
+
+            <!-- System Prompt -->
+            ${log.system_prompt ? `
+            <div class="log-section">
+                <div class="log-section-title">📝 System Prompt</div>
+                <div class="log-section-content" style="max-height: 200px; overflow-y: auto;">${escapeHtml(log.system_prompt)}</div>
+            </div>
+            ` : ''}
+        `;
+    } catch (error) {
+        logContent.innerHTML = `<p class="loading-text">Error: ${error.message}</p>`;
+    }
+}
+
+function hideLogDetail() {
+    document.getElementById('logs-list').classList.remove('hidden');
+    document.getElementById('log-detail').classList.add('hidden');
+    currentLog = null;
+}
+
+async function deleteCurrentLog() {
+    if (!currentLog) return;
+    if (!confirm('Delete this execution log?')) return;
+
+    try {
+        await api.deleteLog(currentLog.sessionId, currentLog.logId);
+        hideLogDetail();
+        loadLogs();
+    } catch (error) {
+        alert(`Error: ${error.message}`);
+    }
+}
+
+// ============================================
 // Initialization
 // ============================================
 async function init() {
@@ -740,6 +963,7 @@ async function init() {
     // Setup event listeners
     setupEventListeners();
     setupCollapsibles();
+    setupStepExpansion();
 }
 
 function setupEventListeners() {
@@ -795,6 +1019,11 @@ function setupEventListeners() {
     // Config buttons
     document.getElementById('reload-config-btn')?.addEventListener('click', loadConfig);
     document.getElementById('save-config-btn')?.addEventListener('click', saveConfig);
+
+    // Logs buttons
+    document.getElementById('refresh-logs-btn')?.addEventListener('click', loadLogs);
+    document.getElementById('back-to-logs-btn')?.addEventListener('click', hideLogDetail);
+    document.getElementById('delete-log-btn')?.addEventListener('click', deleteCurrentLog);
 }
 
 // Start the app
