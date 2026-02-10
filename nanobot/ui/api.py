@@ -336,7 +336,7 @@ async def _process_with_updates(
     if system_prompt:
         await websocket.send_json({
             "type": "debug_prompt",
-            "content": system_prompt[:2000] + ("..." if len(system_prompt) > 2000 else "")
+            "content": system_prompt
         })
     
     # Estimate token counts (rough: ~4 chars per token)
@@ -358,8 +358,11 @@ async def _process_with_updates(
         "message_count": len(messages),
         "history_count": len(session.get_history()),
         "context_tokens": context_tokens,
-        "system_prompt_preview": system_prompt[:500] + "..." if len(system_prompt) > 500 else system_prompt,
-        "system_prompt_full": system_prompt
+        "system_prompt": system_prompt,
+        "messages_summary": [{
+            "role": m.get("role", "unknown"),
+            "content_length": len(str(m.get("content", "")))
+        } for m in messages]
     }
     await websocket.send_json({
         "type": "debug_step",
@@ -412,8 +415,11 @@ async def _process_with_updates(
             "elapsed_seconds": round(elapsed, 2),
             "output_tokens": output_tokens,
             "has_tool_calls": response.has_tool_calls,
-            "tool_calls": [tc.name for tc in response.tool_calls] if response.has_tool_calls else [],
-            "response_preview": response.content[:300] if response.content else ""
+            "tool_calls": [
+                {"name": tc.name, "arguments": tc.arguments}
+                for tc in response.tool_calls
+            ] if response.has_tool_calls else [],
+            "response_content": response.content or ""
         }
         await websocket.send_json({
             "type": "debug_step",
@@ -471,6 +477,7 @@ async def _process_with_updates(
             )
             
             # Execute each tool and send detailed results
+            tool_execution_details = []
             for tool_call in response.tool_calls:
                 tool_start = time.time()
                 result = await agent.tools.execute(tool_call.name, tool_call.arguments)
@@ -480,14 +487,20 @@ async def _process_with_updates(
                     messages, tool_call.id, tool_call.name, result
                 )
                 
-                # Send detailed tool result
-                result_preview = result[:300] + "..." if len(result) > 300 else result
+                # Collect for step_detail
+                tool_execution_details.append({
+                    "name": tool_call.name,
+                    "arguments": tool_call.arguments,
+                    "result": result,
+                    "elapsed_seconds": round(tool_elapsed, 2)
+                })
+                
+                # Send detailed tool result via WebSocket
                 await websocket.send_json({
                     "type": "tool_result",
                     "tool": tool_call.name,
                     "arguments": tool_call.arguments,
-                    "content": result_preview,
-                    "result_full": result,  # Full result for expansion
+                    "content": result,
                     "elapsed": f"{tool_elapsed:.2f}s"
                 })
                 if record:
@@ -495,7 +508,7 @@ async def _process_with_updates(
             
             step_detail = {
                 "tool_count": len(response.tool_calls),
-                "tools_executed": tool_names
+                "tools": tool_execution_details
             }
             await websocket.send_json({
                 "type": "debug_step",
@@ -533,7 +546,7 @@ async def _process_with_updates(
         "response_length": len(final_content),
         "total_iterations": iteration,
         "session_id": session_id,
-        "response_preview": final_content[:500] if final_content else ""
+        "full_response": final_content or ""
     }
     await websocket.send_json({
         "type": "debug_step",

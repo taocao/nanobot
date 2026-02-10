@@ -225,17 +225,19 @@ function populateStepDetails(stepName, detail) {
 
     let html = '';
     for (const [key, value] of Object.entries(detail)) {
-        // Skip very long values in summary, show preview
         let displayValue = value;
-        if (typeof value === 'string' && value.length > 200) {
-            displayValue = value.substring(0, 200) + '...';
-        } else if (typeof value === 'object') {
+        if (typeof value === 'object' && value !== null) {
             displayValue = JSON.stringify(value, null, 2);
-            if (displayValue.length > 200) {
-                displayValue = displayValue.substring(0, 200) + '...';
+            html += `<div class="detail-row"><span class="detail-label">${escapeHtml(key)}:</span></div><pre>${escapeHtml(displayValue)}</pre>`;
+        } else {
+            displayValue = String(value);
+            if (displayValue.length > 500) {
+                // Long text: render in a scrollable pre block
+                html += `<div class="detail-row"><span class="detail-label">${escapeHtml(key)}:</span></div><pre>${escapeHtml(displayValue)}</pre>`;
+            } else {
+                html += `<div class="detail-row"><span class="detail-label">${escapeHtml(key)}:</span><span class="detail-value">${escapeHtml(displayValue)}</span></div>`;
             }
         }
-        html += `<div class="detail-row"><span class="detail-label">${key}:</span><span class="detail-value">${escapeHtml(String(displayValue))}</span></div>`;
     }
     detailsEl.innerHTML = html;
 }
@@ -244,6 +246,27 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function renderStepFullDetails(details) {
+    if (!details || Object.keys(details).length === 0) {
+        return '<em>No details available</em>';
+    }
+    let html = '';
+    for (const [key, value] of Object.entries(details)) {
+        if (typeof value === 'object' && value !== null) {
+            const formatted = JSON.stringify(value, null, 2);
+            html += `<div class="detail-row"><span class="detail-label">${escapeHtml(key)}:</span></div><pre>${escapeHtml(formatted)}</pre>`;
+        } else {
+            const strVal = String(value);
+            if (strVal.length > 500) {
+                html += `<div class="detail-row"><span class="detail-label">${escapeHtml(key)}:</span></div><pre>${escapeHtml(strVal)}</pre>`;
+            } else {
+                html += `<div class="detail-row"><span class="detail-label">${escapeHtml(key)}:</span><span class="detail-value">${escapeHtml(strVal)}</span></div>`;
+            }
+        }
+    }
+    return html;
 }
 
 function handleDebugMetrics(metrics) {
@@ -861,7 +884,7 @@ async function showLogDetail(sessionId, logId) {
             <div class="log-section">
                 <div class="log-section-title">📊 Overview</div>
                 <div class="log-section-content">
-Model: ${log.model || 'unknown'}
+Model: ${escapeHtml(log.model || 'unknown')}
 Iterations: ${log.iterations}
 Started: ${formatLogTime(log.started_at)}
 Completed: ${formatLogTime(log.completed_at)}
@@ -874,14 +897,20 @@ Completed: ${formatLogTime(log.completed_at)}
                 <div class="log-section-content">${escapeHtml(log.user_message)}</div>
             </div>
 
-            <!-- Processing Steps -->
+            <!-- Processing Steps with Full Details -->
             <div class="log-section">
-                <div class="log-section-title">🔄 Processing Steps</div>
+                <div class="log-section-title">🔄 Processing Steps (click to expand)</div>
                 <div class="log-step-list">
-                    ${(log.steps || []).map(step => `
-                        <div class="log-step-item">
-                            <span class="step-icon">${step.status === 'complete' ? '✅' : '⏳'}</span>
-                            <span class="step-summary"><strong>${step.step}</strong>: ${step.summary || ''}</span>
+                    ${(log.steps || []).map((step, idx) => `
+                        <div class="log-step-item expandable-log-step" data-idx="${idx}">
+                            <div class="log-step-header">
+                                <span class="step-icon">${step.status === 'complete' ? '✅' : '⏳'}</span>
+                                <span class="step-summary"><strong>${escapeHtml(step.step)}</strong>: ${escapeHtml(step.summary || '')}</span>
+                                <span class="step-expand">▶</span>
+                            </div>
+                            <div class="log-step-details hidden">
+                                ${renderStepFullDetails(step.details || {})}
+                            </div>
                         </div>
                     `).join('')}
                 </div>
@@ -890,13 +919,13 @@ Completed: ${formatLogTime(log.completed_at)}
             <!-- Tool Executions -->
             ${(log.tool_executions && log.tool_executions.length > 0) ? `
             <div class="log-section">
-                <div class="log-section-title">🔧 Tool Executions</div>
+                <div class="log-section-title">🔧 Tool Executions (${log.tool_executions.length})</div>
                 <div class="log-tool-list">
                     ${log.tool_executions.map(tool => `
                         <div class="log-tool-item">
-                            <div class="tool-name">${tool.tool_name} (${tool.elapsed_seconds?.toFixed(2)}s)</div>
+                            <div class="tool-name">${escapeHtml(tool.tool_name)} (${tool.elapsed_seconds?.toFixed(2)}s)</div>
                             <div class="tool-args">${escapeHtml(JSON.stringify(tool.arguments, null, 2))}</div>
-                            <div class="tool-result">${escapeHtml(tool.result.substring(0, 500))}${tool.result.length > 500 ? '...' : ''}</div>
+                            <div class="tool-result">${escapeHtml(tool.result)}</div>
                         </div>
                     `).join('')}
                 </div>
@@ -913,10 +942,32 @@ Completed: ${formatLogTime(log.completed_at)}
             ${log.system_prompt ? `
             <div class="log-section">
                 <div class="log-section-title">📝 System Prompt</div>
-                <div class="log-section-content" style="max-height: 200px; overflow-y: auto;">${escapeHtml(log.system_prompt)}</div>
+                <div class="log-section-content">${escapeHtml(log.system_prompt)}</div>
+            </div>
+            ` : ''}
+
+            <!-- Raw Metrics -->
+            ${log.metrics ? `
+            <div class="log-section">
+                <div class="log-section-title">📈 Metrics</div>
+                <div class="log-section-content">${escapeHtml(JSON.stringify(log.metrics, null, 2))}</div>
             </div>
             ` : ''}
         `;
+
+        // Add click handlers for expandable steps in log detail
+        logContent.querySelectorAll('.expandable-log-step').forEach(stepEl => {
+            const header = stepEl.querySelector('.log-step-header');
+            const details = stepEl.querySelector('.log-step-details');
+            const expand = stepEl.querySelector('.step-expand');
+            if (header && details) {
+                header.style.cursor = 'pointer';
+                header.addEventListener('click', () => {
+                    details.classList.toggle('hidden');
+                    if (expand) expand.textContent = details.classList.contains('hidden') ? '▶' : '▼';
+                });
+            }
+        });
     } catch (error) {
         logContent.innerHTML = `<p class="loading-text">Error: ${error.message}</p>`;
     }
