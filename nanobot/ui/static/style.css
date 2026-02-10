@@ -1237,7 +1237,7 @@ pre.code-block code {
     color: var(--text-secondary);
     white-space: pre-wrap;
     word-break: break-all;
-    max-height: 300px;
+    max-height: none;
     overflow-y: auto;
 }
 
@@ -1394,6 +1394,12 @@ pre.code-block code {
     background: var(--bg-tertiary);
     border-radius: 8px;
     display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.log-step-header {
+    display: flex;
     align-items: center;
     gap: 12px;
 }
@@ -1405,6 +1411,55 @@ pre.code-block code {
 .log-step-item .step-summary {
     flex: 1;
     font-size: 13px;
+}
+
+.log-step-item .step-expand {
+    font-size: 10px;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+}
+
+.log-step-details {
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    max-height: none;
+    overflow-y: auto;
+}
+
+.log-step-details.hidden {
+    display: none;
+}
+
+.log-step-details .detail-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.log-step-details .detail-label {
+    color: var(--text-muted);
+    min-width: 120px;
+}
+
+.log-step-details .detail-value {
+    color: var(--color-assistant);
+    word-break: break-word;
+}
+
+.log-step-details pre {
+    background: rgba(0, 0, 0, 0.4);
+    padding: 8px;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin-top: 4px;
+    margin-bottom: 8px;
+    white-space: pre-wrap;
+    word-break: break-all;
 }
 
 .log-tool-list {
@@ -1434,7 +1489,7 @@ pre.code-block code {
     background: rgba(0, 0, 0, 0.2);
     padding: 8px;
     border-radius: 4px;
-    max-height: 100px;
+    max-height: none;
     overflow-y: auto;
 }
 
@@ -1445,6 +1500,6 @@ pre.code-block code {
     background: rgba(16, 185, 129, 0.1);
     padding: 8px;
     border-radius: 4px;
-    max-height: 150px;
+    max-height: none;
     overflow-y: auto;
 }
