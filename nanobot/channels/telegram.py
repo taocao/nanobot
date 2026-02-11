@@ -151,34 +151,96 @@ class TelegramChannel(BaseChannel):
             await self._app.shutdown()
             self._app = None
     
+    # Telegram message length limit
+    MAX_MESSAGE_LENGTH = 4096
+
+    @staticmethod
+    def _split_message(text: str, max_len: int = 4096) -> list[str]:
+        """Split a long message into chunks that fit within Telegram's limit.
+        
+        Splits at paragraph boundaries first, then line boundaries,
+        and finally hard-cuts as a last resort.
+        """
+        if len(text) <= max_len:
+            return [text]
+        
+        chunks: list[str] = []
+        remaining = text
+        
+        while remaining:
+            if len(remaining) <= max_len:
+                chunks.append(remaining)
+                break
+            
+            # Try to split at a double newline (paragraph boundary)
+            cut = remaining.rfind("\n\n", 0, max_len)
+            if cut > max_len // 4:  # Only use if not too close to the start
+                chunks.append(remaining[:cut].rstrip())
+                remaining = remaining[cut:].lstrip("\n")
+                continue
+            
+            # Try to split at a single newline (line boundary)
+            cut = remaining.rfind("\n", 0, max_len)
+            if cut > max_len // 4:
+                chunks.append(remaining[:cut].rstrip())
+                remaining = remaining[cut + 1:]
+                continue
+            
+            # Hard cut at max_len
+            chunks.append(remaining[:max_len])
+            remaining = remaining[max_len:]
+        
+        return [c for c in chunks if c.strip()]
+
     async def send(self, msg: OutboundMessage) -> None:
-        """Send a message through Telegram."""
+        """Send a message through Telegram, splitting if too long."""
         if not self._app:
             logger.warning("Telegram bot not running")
             return
         
         try:
-            # chat_id should be the Telegram chat ID (integer)
             chat_id = int(msg.chat_id)
-            # Convert markdown to Telegram HTML
-            html_content = _markdown_to_telegram_html(msg.content)
-            await self._app.bot.send_message(
-                chat_id=chat_id,
-                text=html_content,
-                parse_mode="HTML"
-            )
         except ValueError:
             logger.error(f"Invalid chat_id: {msg.chat_id}")
-        except Exception as e:
-            # Fallback to plain text if HTML parsing fails
-            logger.warning(f"HTML parse failed, falling back to plain text: {e}")
+            return
+        # Skip empty messages (e.g. agent responded with only tool calls)
+        if not msg.content or not msg.content.strip():
+            logger.debug("Skipping empty Telegram message")
+            return
+        
+        # Convert markdown to Telegram HTML
+        html_content = _markdown_to_telegram_html(msg.content)
+        
+        # Guard against HTML conversion producing empty output
+        if not html_content or not html_content.strip():
+            html_content = msg.content
+        
+        # Split into chunks if needed
+        html_chunks = self._split_message(html_content, self.MAX_MESSAGE_LENGTH)
+        plain_chunks = self._split_message(msg.content, self.MAX_MESSAGE_LENGTH)
+        
+        for i, chunk in enumerate(html_chunks):
             try:
                 await self._app.bot.send_message(
-                    chat_id=int(msg.chat_id),
-                    text=msg.content
+                    chat_id=chat_id,
+                    text=chunk,
+                    parse_mode="HTML"
                 )
-            except Exception as e2:
-                logger.error(f"Error sending Telegram message: {e2}")
+            except Exception as e:
+                # Fallback to plain text for this chunk
+                logger.warning(f"HTML parse failed for chunk {i+1}/{len(html_chunks)}, falling back to plain text: {e}")
+                try:
+                    plain_chunk = plain_chunks[i] if i < len(plain_chunks) else chunk
+                    await self._app.bot.send_message(
+                        chat_id=chat_id,
+                        text=plain_chunk
+                    )
+                except Exception as e2:
+                    logger.error(f"Error sending Telegram message chunk {i+1}: {e2}")
+            
+            # Small delay between chunks to avoid rate limiting
+            if len(html_chunks) > 1 and i < len(html_chunks) - 1:
+                await asyncio.sleep(0.3)
     
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""
