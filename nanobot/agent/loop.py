@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,9 @@ class AgentLoop:
         )
         
         self._running = False
+        # Lazy import to avoid circular dependency
+        from nanobot.ui.execution_log import ExecutionLog
+        self.execution_log = ExecutionLog()
         self._register_default_tools()
     
     def _register_default_tools(self) -> None:
@@ -157,6 +161,15 @@ class AgentLoop:
         
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}")
         
+        # Create execution log record
+        record = self.execution_log.create_record(
+            session_id=msg.session_key,
+            user_message=msg.content,
+            model=self.model
+        )
+        record.add_step("receive_input", "complete", f"Received from {msg.channel}:{msg.sender_id}",
+                        channel=msg.channel, sender_id=msg.sender_id, message_length=len(msg.content))
+        
         # Get or create session
         session = self.sessions.get_or_create(msg.session_key)
         
@@ -182,19 +195,40 @@ class AgentLoop:
             chat_id=msg.chat_id,
         )
         
+        context_tokens = sum(len(str(m.get("content", ""))) // 4 for m in messages)
+        record.add_step("build_context", "complete",
+                        f"{len(messages)} messages, ~{context_tokens} tokens",
+                        message_count=len(messages),
+                        history_count=len(session.get_history()),
+                        context_tokens=context_tokens)
+        
         # Agent loop
         iteration = 0
         final_content = None
+        total_output_tokens = 0
         
         while iteration < self.max_iterations:
             iteration += 1
             
             # Call LLM
+            start_time = time.time()
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
                 model=self.model
             )
+            elapsed = time.time() - start_time
+            
+            output_tokens = response.usage.get("completion_tokens", 0)
+            if output_tokens == 0 and response.content:
+                output_tokens = len(response.content) // 4
+            total_output_tokens += output_tokens
+            
+            record.add_step("call_llm", "complete",
+                            f"Iteration {iteration}: {elapsed:.1f}s, {output_tokens} tokens",
+                            iteration=iteration, elapsed_seconds=round(elapsed, 2),
+                            output_tokens=output_tokens,
+                            has_tool_calls=response.has_tool_calls)
             
             # Handle tool calls
             if response.has_tool_calls:
@@ -218,10 +252,18 @@ class AgentLoop:
                 for tool_call in response.tool_calls:
                     args_str = json.dumps(tool_call.arguments)
                     logger.debug(f"Executing tool: {tool_call.name} with arguments: {args_str}")
+                    tool_start = time.time()
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    tool_elapsed = time.time() - tool_start
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
+                    record.add_tool_execution(tool_call.name, tool_call.arguments, result, tool_elapsed)
+                
+                record.add_step("execute_tools", "complete",
+                                f"{len(response.tool_calls)} tools executed",
+                                tool_count=len(response.tool_calls),
+                                tool_names=[tc.name for tc in response.tool_calls])
             else:
                 # No tool calls, we're done
                 final_content = response.content
@@ -234,6 +276,23 @@ class AgentLoop:
         session.add_message("user", msg.content)
         session.add_message("assistant", final_content)
         self.sessions.save(session)
+        
+        # Save execution log
+        record.assistant_response = final_content
+        record.iterations = iteration
+        record.metrics = {
+            "context_tokens": context_tokens,
+            "output_tokens": total_output_tokens,
+            "model": self.model,
+            "channel": msg.channel,
+        }
+        record.add_step("generate_response", "complete",
+                        f"{len(final_content)} chars, {iteration} iterations",
+                        response_length=len(final_content))
+        try:
+            self.execution_log.save(record)
+        except Exception as e:
+            logger.warning(f"Failed to save execution log: {e}")
         
         return OutboundMessage(
             channel=msg.channel,

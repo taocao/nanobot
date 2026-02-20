@@ -25,7 +25,12 @@ const state = {
     // Processing state
     currentStep: null,
     toolCalls: [],
-    messageFlow: []
+    messageFlow: [],
+
+    // Auto-refresh polling
+    activeTab: 'chat',
+    pollTimers: {},
+    pollInterval: 5000,  // 5 seconds
 };
 
 // ============================================
@@ -178,6 +183,9 @@ function handleWebSocketMessage(data) {
             // Update output tokens (estimate)
             state.metrics.outputTokens += Math.ceil(data.content.length / 4);
             updateMetrics();
+
+            // Auto-refresh sessions and logs after response
+            refreshAfterChat();
             break;
 
         case 'error':
@@ -555,14 +563,62 @@ function switchTab(tabName) {
         content.classList.toggle('active', content.id === `${tabName}-tab`);
     });
 
+    // Track active tab for polling
+    state.activeTab = tabName;
+
     // Load tab-specific content
     if (tabName === 'history') {
         loadSessions();
+        startPolling('history', loadSessions);
     } else if (tabName === 'config') {
         loadConfig();
+        stopPolling('history');
+        stopPolling('logs');
     } else if (tabName === 'logs') {
         loadLogs();
+        startPolling('logs', loadLogs);
+    } else {
+        stopPolling('history');
+        stopPolling('logs');
     }
+}
+
+// ============================================
+// Auto-Polling System
+// ============================================
+function startPolling(name, callback) {
+    stopPolling(name);  // Clear existing timer
+    state.pollTimers[name] = setInterval(() => {
+        // Only poll if still on the same tab
+        if ((name === 'history' && state.activeTab === 'history') ||
+            (name === 'logs' && state.activeTab === 'logs')) {
+            callback();
+        } else {
+            stopPolling(name);
+        }
+    }, state.pollInterval);
+}
+
+function stopPolling(name) {
+    if (state.pollTimers[name]) {
+        clearInterval(state.pollTimers[name]);
+        delete state.pollTimers[name];
+    }
+}
+
+function stopAllPolling() {
+    Object.keys(state.pollTimers).forEach(name => stopPolling(name));
+}
+
+function refreshAfterChat() {
+    // Refresh sessions and logs after a chat response completes
+    // Use a small delay to ensure backend has written the data
+    setTimeout(() => {
+        loadSessions();  // Update session list silently
+        if (state.activeTab === 'logs') {
+            loadLogs();  // If on logs tab, refresh immediately
+        }
+    }, 500);
 }
 
 // ============================================
@@ -570,13 +626,17 @@ function switchTab(tabName) {
 // ============================================
 async function loadSessions() {
     const historyList = document.getElementById('history-list');
-    historyList.innerHTML = '<p class="loading-text">Loading sessions...</p>';
+    // Only show "Loading" on first load, not during auto-refresh
+    if (!historyList.dataset.loaded) {
+        historyList.innerHTML = '<p class="loading-text">Loading sessions...</p>';
+    }
 
     try {
         const { sessions } = await api.getSessions();
 
         if (sessions.length === 0) {
             historyList.innerHTML = '<p class="loading-text">No conversation history yet</p>';
+            historyList.dataset.loaded = 'true';
             return;
         }
 
@@ -587,6 +647,7 @@ async function loadSessions() {
                 <div class="history-arrow">→</div>
             </div>
         `).join('');
+        historyList.dataset.loaded = 'true';
 
         // Add click handlers
         historyList.querySelectorAll('.history-item').forEach(item => {
@@ -596,7 +657,10 @@ async function loadSessions() {
         // Update session selector
         updateSessionSelector(sessions);
     } catch (error) {
-        historyList.innerHTML = `<p class="loading-text">Error loading sessions: ${error.message}</p>`;
+        // Silently fail during auto-refresh, only show error on first load
+        if (!historyList.dataset.loaded) {
+            historyList.innerHTML = `<p class="loading-text">Error loading sessions: ${error.message}</p>`;
+        }
     }
 }
 
@@ -827,13 +891,17 @@ let currentLog = null;
 
 async function loadLogs() {
     const logsList = document.getElementById('logs-list');
-    logsList.innerHTML = '<p class="loading-text">Loading logs...</p>';
+    // Only show "Loading" on first load, not during auto-refresh
+    if (!logsList.dataset.loaded) {
+        logsList.innerHTML = '<p class="loading-text">Loading logs...</p>';
+    }
 
     try {
         const { logs } = await api.getLogs();
 
         if (logs.length === 0) {
             logsList.innerHTML = '<p class="loading-text">No execution logs yet. Send some messages to generate logs!</p>';
+            logsList.dataset.loaded = 'true';
             return;
         }
 
@@ -850,13 +918,17 @@ async function loadLogs() {
                 </span>
             </div>
         `).join('');
+        logsList.dataset.loaded = 'true';
 
         // Add click handlers
         logsList.querySelectorAll('.log-item').forEach(item => {
             item.addEventListener('click', () => showLogDetail(item.dataset.session, item.dataset.logId));
         });
     } catch (error) {
-        logsList.innerHTML = `<p class="loading-text">Error loading logs: ${error.message}</p>`;
+        // Silently fail during auto-refresh
+        if (!logsList.dataset.loaded) {
+            logsList.innerHTML = `<p class="loading-text">Error loading logs: ${error.message}</p>`;
+        }
     }
 }
 
