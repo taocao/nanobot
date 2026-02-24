@@ -269,8 +269,21 @@ class AgentLoop:
                 final_content = response.content
                 break
         
-        if final_content is None:
-            final_content = "I've completed processing but have no response to give."
+        if final_content is None or not final_content.strip():
+            # Collect the last tool names for diagnostics
+            last_tools = []
+            for m in reversed(messages):
+                if m.get("role") == "tool" and m.get("name"):
+                    last_tools.append(m["name"])
+                    if len(last_tools) >= 3:
+                        break
+            tools_info = f" (last tools: {', '.join(reversed(last_tools))})" if last_tools else ""
+            final_content = (
+                f"⚠️ I was unable to produce a final answer after {iteration} iterations{tools_info}. "
+                "This usually means a tool returned an error or unexpected result. "
+                "Please try again, simplify your request, or check if the URL/resource is accessible."
+            )
+            logger.warning(f"Agent loop exhausted {iteration} iterations without final content{tools_info}")
         
         # Save to session
         session.add_message("user", msg.content)

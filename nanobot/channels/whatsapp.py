@@ -77,6 +77,13 @@ class WhatsAppChannel(BaseChannel):
         if not self._ws or not self._connected:
             logger.warning("WhatsApp bridge not connected")
             return
+
+        if not msg.content or not msg.content.strip():
+            logger.warning(
+                f"WhatsApp: skipping empty message to {msg.chat_id}. "
+                "The agent produced no content — this is likely a bug."
+            )
+            return
         
         try:
             payload = {
