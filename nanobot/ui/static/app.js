@@ -397,6 +397,7 @@ function addMessage(type, content, avatar = '') {
 }
 
 function formatContent(content) {
+    if (!content) return '';
     // Basic markdown formatting
     let html = content
         .replace(/```(\w+)?\n?([\s\S]*?)```/g, '<pre class="code-block"><code>$2</code></pre>')

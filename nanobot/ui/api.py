@@ -55,7 +55,8 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.bus = MessageBus()
     app.state.agent = None
     app.state.agent_lock = asyncio.Lock()
-    app.state.execution_log = ExecutionLog()
+    from nanobot.config.paths import get_logs_dir
+    app.state.execution_log = ExecutionLog(log_dir=get_logs_dir())
     
     # Static files directory
     static_dir = Path(__file__).parent / "static"
@@ -434,7 +435,6 @@ async def _process_with_updates(
         current_message=message,
         channel="ui",
         chat_id=msg.chat_id,
-        available_tools=list(agent.tools._tools.keys()),
     )
     
     # Extract and send system prompt for educational display
