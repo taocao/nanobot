@@ -24,6 +24,10 @@
                     <span class="nav-icon">💬</span>
                     <span>Chat</span>
                 </button>
+                <button class="nav-item" data-tab="dashboard">
+                    <span class="nav-icon">📊</span>
+                    <span>Dashboard</span>
+                </button>
                 <button class="nav-item" data-tab="logs">
                     <span class="nav-icon">📋</span>
                     <span>Logs</span>
@@ -229,6 +233,75 @@
                         <button id="delete-log-btn" class="btn btn-sm btn-danger">🗑️ Delete</button>
                     </div>
                     <div id="log-content" class="log-content"></div>
+                </div>
+            </section>
+
+            <!-- Dashboard Tab -->
+            <section id="dashboard-tab" class="tab-content">
+                <div class="page-header">
+                    <h1>📊 Governance Dashboard</h1>
+                    <button id="refresh-dashboard-btn" class="btn btn-sm">🔄 Refresh</button>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="dashboard-cards">
+                    <div class="dash-card">
+                        <div class="dash-card-icon">📨</div>
+                        <div class="dash-card-value" id="dash-total-requests">—</div>
+                        <div class="dash-card-label">Total Requests</div>
+                    </div>
+                    <div class="dash-card">
+                        <div class="dash-card-icon">🔄</div>
+                        <div class="dash-card-value" id="dash-avg-iterations">—</div>
+                        <div class="dash-card-label">Avg Iterations</div>
+                    </div>
+                    <div class="dash-card">
+                        <div class="dash-card-icon">🔧</div>
+                        <div class="dash-card-value" id="dash-total-tools">—</div>
+                        <div class="dash-card-label">Tool Calls</div>
+                    </div>
+                    <div class="dash-card">
+                        <div class="dash-card-icon">💰</div>
+                        <div class="dash-card-value" id="dash-est-cost">—</div>
+                        <div class="dash-card-label">Est. Cost</div>
+                    </div>
+                    <div class="dash-card">
+                        <div class="dash-card-icon">⬆️</div>
+                        <div class="dash-card-value" id="dash-input-tokens">—</div>
+                        <div class="dash-card-label">Input Tokens</div>
+                    </div>
+                    <div class="dash-card">
+                        <div class="dash-card-icon">⬇️</div>
+                        <div class="dash-card-value" id="dash-output-tokens">—</div>
+                        <div class="dash-card-label">Output Tokens</div>
+                    </div>
+                </div>
+
+                <!-- Two-column layout -->
+                <div class="dashboard-columns">
+                    <!-- Tool Efficiency -->
+                    <div class="dashboard-section">
+                        <h2 class="section-title"><span class="section-icon">🎯</span> Tool Efficiency</h2>
+                        <div id="tool-efficiency" class="tool-efficiency">
+                            <p class="loading-text">Loading...</p>
+                        </div>
+                    </div>
+
+                    <!-- Model Usage -->
+                    <div class="dashboard-section">
+                        <h2 class="section-title"><span class="section-icon">🤖</span> Model Usage</h2>
+                        <div id="model-usage" class="model-usage">
+                            <p class="loading-text">Loading...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Requests Timeline -->
+                <div class="dashboard-section">
+                    <h2 class="section-title"><span class="section-icon">📋</span> Recent Requests</h2>
+                    <div id="recent-requests" class="recent-requests">
+                        <p class="loading-text">Loading...</p>
+                    </div>
                 </div>
             </section>
 
