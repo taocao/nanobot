@@ -94,6 +94,12 @@ const api = {
             method: 'DELETE'
         });
         return res.json();
+    },
+
+    // Dashboard API
+    async getDashboardStats() {
+        const res = await fetch(`${this.baseUrl}/api/dashboard/stats`);
+        return res.json();
     }
 };
 
@@ -574,12 +580,17 @@ function switchTab(tabName) {
         loadConfig();
         stopPolling('history');
         stopPolling('logs');
+        stopPolling('dashboard');
     } else if (tabName === 'logs') {
         loadLogs();
         startPolling('logs', loadLogs);
+    } else if (tabName === 'dashboard') {
+        loadDashboard();
+        startPolling('dashboard', loadDashboard);
     } else {
         stopPolling('history');
         stopPolling('logs');
+        stopPolling('dashboard');
     }
 }
 
@@ -590,8 +601,7 @@ function startPolling(name, callback) {
     stopPolling(name);  // Clear existing timer
     state.pollTimers[name] = setInterval(() => {
         // Only poll if still on the same tab
-        if ((name === 'history' && state.activeTab === 'history') ||
-            (name === 'logs' && state.activeTab === 'logs')) {
+        if (state.activeTab === name) {
             callback();
         } else {
             stopPolling(name);
@@ -1147,6 +1157,138 @@ function setupEventListeners() {
     document.getElementById('refresh-logs-btn')?.addEventListener('click', loadLogs);
     document.getElementById('back-to-logs-btn')?.addEventListener('click', hideLogDetail);
     document.getElementById('delete-log-btn')?.addEventListener('click', deleteCurrentLog);
+
+    // Dashboard buttons
+    document.getElementById('refresh-dashboard-btn')?.addEventListener('click', loadDashboard);
+}
+
+// ============================================
+// Dashboard
+// ============================================
+async function loadDashboard() {
+    try {
+        const data = await api.getDashboardStats();
+        console.log('Dashboard data:', data);
+        renderDashboard(data);
+    } catch (error) {
+        console.error('Error loading dashboard:', error);
+        // Show error in the recent requests section
+        const reqEl = document.getElementById('recent-requests');
+        if (reqEl) {
+            reqEl.innerHTML = `<p class="loading-text" style="color: var(--color-error)">
+                ⚠️ Failed to load dashboard data. Server may need restart to load new endpoint.
+                <br><small>${error.message || 'Unknown error'}</small>
+            </p>`;
+        }
+    }
+}
+
+function renderDashboard(data) {
+    // Summary cards
+    document.getElementById('dash-total-requests').textContent = data.total_requests || 0;
+    document.getElementById('dash-avg-iterations').textContent = data.avg_iterations || 0;
+    document.getElementById('dash-total-tools').textContent = data.total_tool_calls || 0;
+    document.getElementById('dash-est-cost').textContent = `$${(data.estimated_cost || 0).toFixed(4)}`;
+    document.getElementById('dash-input-tokens').textContent = formatTokens(data.total_input_tokens || 0);
+    document.getElementById('dash-output-tokens').textContent = formatTokens(data.total_output_tokens || 0);
+
+    // Tool Efficiency
+    const toolEl = document.getElementById('tool-efficiency');
+    const toolStats = data.tool_stats || {};
+    const toolNames = Object.keys(toolStats);
+
+    if (toolNames.length === 0) {
+        toolEl.innerHTML = '<p class="loading-text">No tool data yet</p>';
+    } else {
+        toolEl.innerHTML = toolNames.map(name => {
+            const s = toolStats[name];
+            const rate = s.success_rate || 0;
+            const barClass = rate >= 80 ? 'bar-success' : rate >= 50 ? 'bar-warning' : 'bar-danger';
+            return `
+                <div class="efficiency-row">
+                    <div class="efficiency-label">
+                        <span class="tool-name">${escapeHtml(name)}</span>
+                        <span class="tool-stats">${s.success}✓ ${s.fail}✗ · avg ${s.avg_time}s</span>
+                    </div>
+                    <div class="efficiency-bar-wrap">
+                        <div class="efficiency-bar ${barClass}" style="width: ${rate}%"></div>
+                    </div>
+                    <span class="efficiency-rate">${rate}%</span>
+                </div>`;
+        }).join('');
+    }
+
+    // Model Usage
+    const modelEl = document.getElementById('model-usage');
+    const models = data.model_usage || {};
+    const modelNames = Object.keys(models);
+
+    if (modelNames.length === 0) {
+        modelEl.innerHTML = '<p class="loading-text">No model data yet</p>';
+    } else {
+        const maxCount = Math.max(...Object.values(models));
+        modelEl.innerHTML = modelNames.map(name => {
+            const count = models[name];
+            const pct = maxCount > 0 ? (count / maxCount) * 100 : 0;
+            // Shorten model name for display
+            const shortName = name.split('/').pop();
+            return `
+                <div class="model-row">
+                    <div class="model-label" title="${escapeHtml(name)}">${escapeHtml(shortName)}</div>
+                    <div class="model-bar-wrap">
+                        <div class="model-bar" style="width: ${pct}%"></div>
+                    </div>
+                    <span class="model-count">${count}</span>
+                </div>`;
+        }).join('');
+    }
+
+    // Recent Requests Timeline
+    const reqEl = document.getElementById('recent-requests');
+    const requests = data.recent_requests || [];
+
+    if (requests.length === 0) {
+        reqEl.innerHTML = '<p class="loading-text">No requests yet</p>';
+    } else {
+        reqEl.innerHTML = requests.map(req => {
+            const time = req.started_at ? new Date(req.started_at).toLocaleString() : '—';
+            const wastedBadge = req.wasted_calls > 0
+                ? `<span class="badge badge-warn">${req.wasted_calls} wasted</span>`
+                : '';
+            const errorBadge = req.has_error
+                ? '<span class="badge badge-error">error</span>'
+                : '';
+
+            const toolsHtml = (req.tools || []).map(t => {
+                const icon = t.success ? '✅' : '❌';
+                const cls = t.success ? 'tool-ok' : 'tool-fail';
+                return `<div class="timeline-tool ${cls}">
+                    <span>${icon} ${escapeHtml(t.name)}</span>
+                    <span class="tool-time">${t.elapsed}s</span>
+                    <div class="tool-preview">${escapeHtml(t.result_preview)}</div>
+                </div>`;
+            }).join('');
+
+            return `
+            <div class="timeline-item">
+                <div class="timeline-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <span class="timeline-time">${time}</span>
+                    <span class="timeline-msg">${escapeHtml(req.message_preview)}</span>
+                    <div class="timeline-badges">
+                        <span class="badge">${req.iterations} iter</span>
+                        <span class="badge">${req.tool_count}T</span>
+                        ${wastedBadge}
+                        ${errorBadge}
+                        <span class="badge badge-tokens">${formatTokens(req.input_tokens + req.output_tokens)} tok</span>
+                    </div>
+                    <span class="timeline-expand">▶</span>
+                </div>
+                <div class="timeline-details">
+                    ${toolsHtml || '<p class="loading-text">No tool calls</p>'}
+                </div>
+            </div>`;
+        }).join('');
+    }
 }
 
 // Start the app

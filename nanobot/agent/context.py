@@ -25,12 +25,13 @@ class ContextBuilder:
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
     
-    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
+    def build_system_prompt(self, skill_names: list[str] | None = None, available_tools: list[str] | None = None) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
         
         Args:
             skill_names: Optional list of skills to include.
+            available_tools: Optional list of registered tool names for dynamic prompt.
         
         Returns:
             Complete system prompt.
@@ -38,7 +39,7 @@ class ContextBuilder:
         parts = []
         
         # Core identity
-        parts.append(self._get_identity())
+        parts.append(self._get_identity(available_tools=available_tools))
         
         # Bootstrap files
         bootstrap = self._load_bootstrap_files()
@@ -70,7 +71,7 @@ Skills with available="false" need dependencies installed first - you can try in
         
         return "\n\n---\n\n".join(parts)
     
-    def _get_identity(self) -> str:
+    def _get_identity(self, available_tools: list[str] | None = None) -> str:
         """Get the core identity section."""
         from datetime import datetime
         now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
@@ -78,14 +79,27 @@ Skills with available="false" need dependencies installed first - you can try in
         system = platform.system()
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
         
+        # Build capabilities list dynamically based on available tools
+        capabilities = [
+            "- Read, write, and edit files",
+            "- Execute shell commands",
+        ]
+        tools = available_tools or []
+        if "web_search" in tools and "web_fetch" in tools:
+            capabilities.append("- Search the web and fetch web pages")
+        elif "web_fetch" in tools:
+            capabilities.append("- Fetch web pages (web search is not available)")
+        if "message" in tools:
+            capabilities.append("- Send messages to users on chat channels")
+        if "spawn" in tools:
+            capabilities.append("- Spawn subagents for complex background tasks")
+        
+        capabilities_str = "\n".join(capabilities)
+        
         return f"""# nanobot 🐈
 
 You are nanobot, a helpful AI assistant. You have access to tools that allow you to:
-- Read, write, and edit files
-- Execute shell commands
-- Search the web and fetch web pages
-- Send messages to users on chat channels
-- Spawn subagents for complex background tasks
+{capabilities_str}
 
 ## Current Time
 {now}
@@ -104,7 +118,15 @@ Only use the 'message' tool when you need to send a message to a specific chat c
 For normal conversation, just respond with text - do not call the message tool.
 
 Always be helpful, accurate, and concise. When using tools, explain what you're doing.
-When remembering something, write to {workspace_path}/memory/MEMORY.md"""
+When remembering something, write to {workspace_path}/memory/MEMORY.md
+
+## Tool Usage Guidelines
+- When asked to summarize or explain a URL, fetch it ONCE with web_fetch and then respond immediately with your analysis. Do NOT fetch additional pages, related links, or search for more context unless the user explicitly asks.
+- To fetch URL content, ALWAYS use web_fetch — do NOT use exec with curl/wget.
+- If a tool returns an error, do NOT retry the same tool with the same or similar arguments.
+- If web_fetch fails for a URL, try prepending https://r.jina.ai/ to the URL as a single retry.
+- Complete each task with the FEWEST tool calls possible. Aim for 1-2 tool calls per request.
+- Do NOT explore links found within fetched pages unless the user specifically requests it."""
     
     def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace."""
@@ -126,6 +148,7 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
         media: list[str] | None = None,
         channel: str | None = None,
         chat_id: str | None = None,
+        available_tools: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call.
@@ -137,6 +160,7 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
             media: Optional list of local file paths for images/media.
             channel: Current channel (telegram, feishu, etc.).
             chat_id: Current chat/user ID.
+            available_tools: Optional list of registered tool names.
 
         Returns:
             List of messages including system prompt.
@@ -144,7 +168,7 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
         messages = []
 
         # System prompt
-        system_prompt = self.build_system_prompt(skill_names)
+        system_prompt = self.build_system_prompt(skill_names, available_tools=available_tools)
         if channel and chat_id:
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
         messages.append({"role": "system", "content": system_prompt})

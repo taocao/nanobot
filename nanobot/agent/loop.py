@@ -95,7 +95,10 @@ class AgentLoop:
         ))
         
         # Web tools
-        self.tools.register(WebSearchTool(api_key=self.brave_api_key))
+        if self.brave_api_key:
+            self.tools.register(WebSearchTool(api_key=self.brave_api_key))
+        else:
+            logger.info("web_search tool disabled: BRAVE_API_KEY not configured")
         self.tools.register(WebFetchTool())
         
         # Message tool
@@ -187,12 +190,14 @@ class AgentLoop:
             cron_tool.set_context(msg.channel, msg.chat_id)
         
         # Build initial messages (use get_history for LLM-formatted messages)
+        tool_names = list(self.tools._tools.keys())
         messages = self.context.build_messages(
             history=session.get_history(),
             current_message=msg.content,
             media=msg.media if msg.media else None,
             channel=msg.channel,
             chat_id=msg.chat_id,
+            available_tools=tool_names,
         )
         
         context_tokens = sum(len(str(m.get("content", ""))) // 4 for m in messages)
@@ -355,6 +360,7 @@ class AgentLoop:
             current_message=msg.content,
             channel=origin_channel,
             chat_id=origin_chat_id,
+            available_tools=list(self.tools._tools.keys()),
         )
         
         # Agent loop (limited for announce handling)

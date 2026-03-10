@@ -41,7 +41,13 @@ class ExecTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Execute a shell command and return its output. Use with caution."
+        desc = "Execute a shell command in the workspace directory and return its output."
+        if self.restrict_to_workspace:
+            desc += (
+                " Commands referencing paths outside the workspace will be BLOCKED."
+                " Do NOT use curl/wget to fetch URLs — use the web_fetch tool instead."
+            )
+        return desc
     
     @property
     def parameters(self) -> dict[str, Any]:

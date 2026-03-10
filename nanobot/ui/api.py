@@ -145,6 +145,115 @@ def create_app(config: Config | None = None) -> FastAPI:
             return {"status": "ok", "message": "Log deleted"}
         raise HTTPException(status_code=404, detail="Log not found")
     
+    # ========================================
+    # Dashboard Stats Endpoint
+    # ========================================
+    @app.get("/api/dashboard/stats")
+    async def dashboard_stats(limit: int = 100):
+        """Aggregate stats from execution logs for the governance dashboard."""
+        logs = app.state.execution_log.list_logs(limit=limit)
+        
+        if not logs:
+            return {
+                "total_requests": 0, "avg_iterations": 0,
+                "total_tool_calls": 0, "estimated_cost": 0,
+                "tool_stats": {}, "recent_requests": [], "model_usage": {}
+            }
+        
+        total_requests = len(logs)
+        total_iterations = 0
+        total_tool_calls = 0
+        total_input_tokens = 0
+        total_output_tokens = 0
+        tool_stats: dict[str, dict[str, int]] = {}  # name -> {success, fail, total}
+        model_usage: dict[str, int] = {}
+        recent_requests = []
+        
+        for log_summary in logs:
+            session_id = log_summary.get("session_id", "")
+            log_id = log_summary.get("log_id", "")
+            model = log_summary.get("model", "unknown")
+            iterations = log_summary.get("iterations", 0)
+            tool_count = log_summary.get("tool_count", 0)
+            
+            total_iterations += iterations
+            total_tool_calls += tool_count
+            model_usage[model] = model_usage.get(model, 0) + 1
+            
+            # Fetch full log for detailed analysis
+            full_log = app.state.execution_log.get_log(session_id, log_id)
+            if not full_log:
+                continue
+            
+            # Token metrics
+            metrics = full_log.get("metrics", {})
+            total_input_tokens += metrics.get("context_tokens", 0)
+            total_output_tokens += metrics.get("output_tokens", 0)
+            
+            # Tool-level stats
+            request_tools = []
+            for te in full_log.get("tool_executions", []):
+                name = te.get("tool_name", "unknown")
+                result = te.get("result", "")
+                elapsed = te.get("elapsed_seconds", 0)
+                is_error = result.startswith("Error:") or result.startswith("❌")
+                
+                if name not in tool_stats:
+                    tool_stats[name] = {"success": 0, "fail": 0, "total": 0, "total_time": 0}
+                tool_stats[name]["total"] += 1
+                tool_stats[name]["total_time"] += elapsed
+                if is_error:
+                    tool_stats[name]["fail"] += 1
+                else:
+                    tool_stats[name]["success"] += 1
+                
+                request_tools.append({
+                    "name": name,
+                    "elapsed": round(elapsed, 2),
+                    "success": not is_error,
+                    "result_preview": result[:120]
+                })
+            
+            recent_requests.append({
+                "log_id": log_id,
+                "session_id": session_id,
+                "started_at": full_log.get("started_at", ""),
+                "message_preview": full_log.get("user_message", "")[:100],
+                "model": model,
+                "iterations": iterations,
+                "tool_count": tool_count,
+                "tools": request_tools,
+                "input_tokens": metrics.get("context_tokens", 0),
+                "output_tokens": metrics.get("output_tokens", 0),
+                "has_error": bool(full_log.get("error")),
+                "wasted_calls": sum(1 for t in request_tools if not t["success"]),
+            })
+        
+        # Cost estimation (rough, per 1M tokens)
+        # Using average pricing: ~$3/1M input, ~$15/1M output
+        estimated_cost = (total_input_tokens * 3 / 1_000_000) + (total_output_tokens * 15 / 1_000_000)
+        
+        # Add success rate to tool_stats
+        for name, stats in tool_stats.items():
+            stats["success_rate"] = round(
+                stats["success"] / stats["total"] * 100, 1
+            ) if stats["total"] > 0 else 0
+            stats["avg_time"] = round(
+                stats["total_time"] / stats["total"], 2
+            ) if stats["total"] > 0 else 0
+        
+        return {
+            "total_requests": total_requests,
+            "avg_iterations": round(total_iterations / total_requests, 1) if total_requests else 0,
+            "total_tool_calls": total_tool_calls,
+            "estimated_cost": round(estimated_cost, 4),
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
+            "tool_stats": tool_stats,
+            "model_usage": model_usage,
+            "recent_requests": recent_requests[:20],  # Last 20
+        }
+    
     @app.get("/api/status")
     async def get_status():
         """Get nanobot status."""
@@ -324,6 +433,7 @@ async def _process_with_updates(
         current_message=message,
         channel="ui",
         chat_id=msg.chat_id,
+        available_tools=list(agent.tools._tools.keys()),
     )
     
     # Extract and send system prompt for educational display
