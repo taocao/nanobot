@@ -85,8 +85,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         """Update configuration."""
         try:
             # Validate by parsing through schema
-            from nanobot.config.loader import convert_keys
-            validated = Config.model_validate(convert_keys(update.config))
+            validated = Config.model_validate(update.config)
             save_config(validated)
             app.state.config = validated
             # Reset agent so it picks up new config
@@ -319,28 +318,30 @@ async def _get_or_create_agent(app: FastAPI) -> AgentLoop:
     async with app.state.agent_lock:
         if app.state.agent is None:
             config = app.state.config
-            
-            # Get provider
-            api_key = config.get_api_key()
-            api_base = config.get_api_base()
             model = config.agents.defaults.model
             
-            provider = LiteLLMProvider(
-                api_key=api_key,
-                api_base=api_base,
-                default_model=model
-            )
+            # Use the same provider factory as the CLI
+            from nanobot.cli.commands import _make_provider
+            provider = _make_provider(config)
             
-            # Create agent loop
+            # Create agent loop (matching upstream constructor)
             app.state.agent = AgentLoop(
                 bus=app.state.bus,
                 provider=provider,
                 workspace=config.workspace_path,
                 model=model,
+                temperature=config.agents.defaults.temperature,
+                max_tokens=config.agents.defaults.max_tokens,
                 max_iterations=config.agents.defaults.max_tool_iterations,
+                memory_window=config.agents.defaults.memory_window,
+                reasoning_effort=config.agents.defaults.reasoning_effort,
                 brave_api_key=config.tools.web.search.api_key or None,
+                web_proxy=config.tools.web.proxy or None,
                 exec_config=config.tools.exec,
                 restrict_to_workspace=config.tools.restrict_to_workspace,
+                session_manager=app.state.sessions,
+                mcp_servers=config.tools.mcp_servers,
+                channels_config=config.channels,
             )
         
         return app.state.agent

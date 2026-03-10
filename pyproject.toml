@@ -60,6 +60,10 @@ dev = [
     "mistune>=3.0.0,<4.0.0",
     "nh3>=0.2.17,<1.0.0",
 ]
+ui = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+]
 
 [project.scripts]
 nanobot = "nanobot.cli.commands:app"

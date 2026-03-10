@@ -284,6 +284,36 @@ def _load_runtime_config(config: str | None = None, workspace: str | None = None
 
 
 # ============================================================================
+# Web UI
+# ============================================================================
+
+
+@app.command()
+def ui(
+    port: int = typer.Option(8080, "--port", "-p", help="UI server port"),
+    host: str = typer.Option("127.0.0.1", "--host", help="Host to bind to"),
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+):
+    """Launch the web UI for nanobot."""
+    try:
+        import uvicorn
+    except ImportError:
+        console.print("[red]Error: UI dependencies not installed.[/red]")
+        console.print("Install with: [cyan]pip install nanobot-ai[ui][/cyan]")
+        raise typer.Exit(1)
+
+    from nanobot.ui.api import create_app
+
+    cfg = _load_runtime_config(config, workspace)
+    console.print(f"{__logo__} Starting web UI at [cyan]http://{host}:{port}[/cyan]")
+    console.print("Press Ctrl+C to stop.\n")
+
+    app_instance = create_app(cfg)
+    uvicorn.run(app_instance, host=host, port=port, log_level="warning")
+
+
+# ============================================================================
 # Gateway / Server
 # ============================================================================
 
