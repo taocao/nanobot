@@ -309,6 +309,15 @@ class ExecToolConfig(Base):
     path_append: str = ""
 
 
+class GoogleCalendarConfig(Base):
+    """Google Calendar tool configuration."""
+
+    enabled: bool = False
+    credentials_file: str = ""  # Path to service account JSON key file
+    calendar_id: str = "primary"  # Calendar ID (default: primary)
+    timezone: str = "Europe/London"  # IANA timezone for events
+
+
 class MCPServerConfig(Base):
     """MCP server connection configuration (stdio or HTTP)."""
 
@@ -326,6 +335,7 @@ class ToolsConfig(Base):
 
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
+    google_calendar: GoogleCalendarConfig = Field(default_factory=GoogleCalendarConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 

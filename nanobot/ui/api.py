@@ -343,6 +343,7 @@ async def _get_or_create_agent(app: FastAPI) -> AgentLoop:
                 session_manager=app.state.sessions,
                 mcp_servers=config.tools.mcp_servers,
                 channels_config=config.channels,
+                google_calendar_config=config.tools.google_calendar,
             )
         
         return app.state.agent
